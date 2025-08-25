@@ -4343,180 +4343,1269 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 }
 
 
-// Menu Browser Screen
-class MenuBrowserScreen extends StatelessWidget {
+
+
+class MenuBrowserScreen extends StatefulWidget {
+  @override
+  _MenuBrowserScreenState createState() => _MenuBrowserScreenState();
+}
+
+class _MenuBrowserScreenState extends State<MenuBrowserScreen>
+    with TickerProviderStateMixin {
+  late TabController _tabController;
+  late AnimationController _fadeController;
+  late Animation<double> _fadeAnimation;
+
+  final Color primaryColor = Color(0xFF1976D2);
+  final Color secondaryColor = Color(0xFFE3F2FD);
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _fadeController = AnimationController(
+      duration: Duration(milliseconds: 600),
+      vsync: this,
+    );
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _fadeController, curve: Curves.easeInOut),
+    );
+    _fadeController.forward();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    _fadeController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text('Menu Browser'),
-          bottom: TabBar(
-            tabs: [
-              Tab(text: 'Categories'),
-              Tab(text: 'All Items'),
-            ],
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar(
+            pinned: true,
+            expandedHeight: 140.0,
+            backgroundColor: primaryColor,
+            automaticallyImplyLeading: true,
+            iconTheme: IconThemeData(color: Colors.white),
+            flexibleSpace: FlexibleSpaceBar(
+              titlePadding: EdgeInsets.only(left: 60, bottom: 50),
+              title: Text(
+                'Menu Browser',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 22,
+                  color: Colors.white,
+                ),
+              ),
+              background: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [primaryColor, primaryColor.withOpacity(0.7)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: Stack(
+                  children: [
+                    Positioned(
+                      right: -80,
+                      top: -80,
+                      child: Container(
+                        width: 200,
+                        height: 200,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white.withOpacity(0.1),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            bottom: PreferredSize(
+              preferredSize: Size.fromHeight(50.0),
+              child: Container(
+                color: Colors.white,
+                child: TabBar(
+                  controller: _tabController,
+                  labelColor: primaryColor,
+                  unselectedLabelColor: Colors.grey[600],
+                  indicatorColor: primaryColor,
+                  indicatorWeight: 3,
+                  labelStyle: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                  unselectedLabelStyle: TextStyle(
+                    fontWeight: FontWeight.w500,
+                    fontSize: 15,
+                  ),
+                  tabs: [
+                    Tab(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.category_rounded, size: 20),
+                          SizedBox(width: 8),
+                          Text('Categories'),
+                        ],
+                      ),
+                    ),
+                    Tab(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.restaurant_menu_rounded, size: 20),
+                          SizedBox(width: 8),
+                          Text('All Items'),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
-        ),
-        body: TabBarView(
-          children: [
-            CategoriesTab(),
-            AllMenuItemsTab(),
-          ],
-        ),
+          SliverFillRemaining(
+            child: FadeTransition(
+              opacity: _fadeAnimation,
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  CategoriesTab(),
+                  AllMenuItemsTab(),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
-// Categories Tab
-class CategoriesTab extends StatelessWidget {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
+class CategoriesTab extends StatefulWidget {
   @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<QuerySnapshot>(
-      stream: _firestore
-          .collection('menu_categories')
-          .where('isActive', isEqualTo: true)
-          .where('branchId', isEqualTo: 'Old_Airport')
-          .orderBy('sortOrder')
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return Center(child: CircularProgressIndicator());
-        }
-
-        final categories = snapshot.data!.docs;
-
-        return ListView.builder(
-          itemCount: categories.length,
-          itemBuilder: (context, index) {
-            final category = categories[index];
-            return ListTile(
-              leading: category['imageUrl'] != null
-                  ? Image.network(category['imageUrl'], width: 50, height: 50)
-                  : Icon(Icons.category),
-              title: Text(category['name']),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => CategoryItemsScreen(category: category),
-                  ),
-                );
-              },
-            );
-          },
-        );
-      },
-    );
-  }
+  _CategoriesTabState createState() => _CategoriesTabState();
 }
 
-// Category Items Screen - Updated with proper type casting
-class CategoryItemsScreen extends StatelessWidget {
-  final QueryDocumentSnapshot category;
+class _CategoriesTabState extends State<CategoriesTab>
+    with AutomaticKeepAliveClientMixin {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final Color primaryColor = Color(0xFF1976D2);
 
-  CategoryItemsScreen({required this.category});
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   Widget build(BuildContext context) {
-    final categoryData = category.data() as Map<String, dynamic>;
-    final categoryName = categoryData['name']?.toString() ?? '';
-
-    return Scaffold(
-      appBar: AppBar(title: Text(categoryName)),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('menu_items')
-            .where('categoryId', isEqualTo: categoryName)
+    super.build(context);
+    return Container(
+      padding: EdgeInsets.all(16),
+      child: StreamBuilder<QuerySnapshot>(
+        stream: _firestore
+            .collection('menu_categories')
+            .where('isActive', isEqualTo: true)
             .where('branchId', isEqualTo: 'Old_Airport')
-            .where('isAvailable', isEqualTo: true)
             .orderBy('sortOrder')
             .snapshots(),
         builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return Center(child: CircularProgressIndicator());
+          if (snapshot.hasError) {
+            return _buildErrorState('Error loading categories');
           }
 
-          final items = snapshot.data!.docs;
+          if (!snapshot.hasData) {
+            return _buildLoadingState();
+          }
 
-          return ListView.builder(
-            itemCount: items.length,
+          final categories = snapshot.data!.docs;
+
+          if (categories.isEmpty) {
+            return _buildEmptyState(
+              'No Categories Available',
+              'Categories will appear here when added',
+              Icons.category_outlined,
+            );
+          }
+
+          return GridView.builder(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: MediaQuery.of(context).size.width > 600 ? 3 : 2,
+              crossAxisSpacing: 16,
+              mainAxisSpacing: 16,
+              childAspectRatio: 0.85,
+            ),
+            itemCount: categories.length,
             itemBuilder: (context, index) {
-              final item = items[index];
-              final itemData = item.data() as Map<String, dynamic>;
-              final name = itemData['name']?.toString() ?? 'Unknown Item';
-              final description = itemData['description']?.toString() ?? '';
-              final price = (itemData['price'] as num?)?.toDouble() ?? 0.0;
-              final estimatedTime = itemData['EstimatedTime']?.toString() ?? '';
-
-              return ListTile(
-                leading: itemData['imageUrl'] != null
-                    ? Image.network(itemData['imageUrl']!, width: 50, height: 50)
-                    : Icon(Icons.fastfood),
-                title: Text(name),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (description.isNotEmpty) Text(description),
-                    Text('\$${price.toStringAsFixed(2)}'),
-                    if (estimatedTime.isNotEmpty)
-                      Text('Prep time: $estimatedTime mins'),
-                  ],
-                ),
-              );
+              final category = categories[index];
+              return _buildCategoryCard(context, category, index);
             },
           );
         },
       ),
     );
   }
-}
-// All Menu Items Tab
-class AllMenuItemsTab extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('menu_items')
-          .where('isAvailable', isEqualTo: true)
-          .where('branchId', isEqualTo: 'Old_Airport')
-          .orderBy('name')
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return Center(child: CircularProgressIndicator());
-        }
 
-        final items = snapshot.data!.docs;
+  Widget _buildCategoryCard(BuildContext context, QueryDocumentSnapshot category, int index) {
+    final categoryData = category.data() as Map<String, dynamic>;
+    final name = categoryData['name']?.toString() ?? 'Unknown Category';
+    final imageUrl = categoryData['imageUrl']?.toString();
+    final description = categoryData['description']?.toString() ?? '';
 
-        return ListView.builder(
-          itemCount: items.length,
-          itemBuilder: (context, index) {
-            final item = items[index];
-            return ListTile(
-              leading: item['imageUrl'] != null
-                  ? Image.network(item['imageUrl'], width: 50, height: 50)
-                  : Icon(Icons.fastfood),
-              title: Text(item['name']),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(item['description'] ?? ''),
-                  Text('\$${item['price'].toStringAsFixed(2)}'),
-                  if (item['EstimatedTime'] != null)
-                    Text('Prep time: ${item['EstimatedTime']} mins'),
-                ],
+    return Hero(
+      tag: 'category_$index',
+      child: GestureDetector(
+        onTap: () {
+          HapticFeedback.lightImpact();
+          Navigator.push(
+            context,
+            PageRouteBuilder(
+              pageBuilder: (context, animation, secondaryAnimation) =>
+                  CategoryItemsScreen(category: category),
+              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                return SlideTransition(
+                  position: animation.drive(
+                    Tween(begin: Offset(1.0, 0.0), end: Offset.zero).chain(
+                      CurveTween(curve: Curves.easeInOut),
+                    ),
+                  ),
+                  child: child,
+                );
+              },
+            ),
+          );
+        },
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.08),
+                blurRadius: 15,
+                offset: Offset(0, 4),
               ),
-            );
-          },
-        );
-      },
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Image Section
+              Expanded(
+                flex: 3,
+                child: Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(20),
+                      topRight: Radius.circular(20),
+                    ),
+                    gradient: LinearGradient(
+                      colors: [
+                        primaryColor.withOpacity(0.1),
+                        primaryColor.withOpacity(0.05),
+                      ],
+                    ),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(20),
+                      topRight: Radius.circular(20),
+                    ),
+                    child: imageUrl != null
+                        ? Image.network(
+                      imageUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) =>
+                          _buildCategoryPlaceholder(),
+                    )
+                        : _buildCategoryPlaceholder(),
+                  ),
+                ),
+              ),
+
+              // Content Section
+              Expanded(
+                flex: 2,
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            name,
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: Colors.grey[800],
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (description.isNotEmpty) ...[
+                            SizedBox(height: 4),
+                            Text(
+                              description,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[600],
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ],
+                      ),
+
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'View Items',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: primaryColor,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Icon(
+                            Icons.arrow_forward_ios_rounded,
+                            size: 14,
+                            color: primaryColor,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryPlaceholder() {
+    return Container(
+      child: Center(
+        child: Icon(
+          Icons.category_rounded,
+          size: 50,
+          color: primaryColor.withOpacity(0.6),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          CircularProgressIndicator(color: primaryColor),
+          SizedBox(height: 16),
+          Text(
+            'Loading Categories...',
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey[600],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState(String message) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.error_outline, size: 64, color: Colors.red[300]),
+          SizedBox(height: 16),
+          Text(
+            message,
+            style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(String title, String subtitle, IconData icon) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 80, color: Colors.grey[300]),
+          SizedBox(height: 16),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[700],
+            ),
+          ),
+          SizedBox(height: 8),
+          Text(
+            subtitle,
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey[500],
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
     );
   }
 }
+
+class CategoryItemsScreen extends StatefulWidget {
+  final QueryDocumentSnapshot category;
+
+  CategoryItemsScreen({required this.category});
+
+  @override
+  _CategoryItemsScreenState createState() => _CategoryItemsScreenState();
+}
+
+class _CategoryItemsScreenState extends State<CategoryItemsScreen>
+    with TickerProviderStateMixin {
+  final Color primaryColor = Color(0xFF1976D2);
+  late AnimationController _listAnimationController;
+  late Animation<double> _listAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _listAnimationController = AnimationController(
+      duration: Duration(milliseconds: 800),
+      vsync: this,
+    );
+    _listAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _listAnimationController,
+        curve: Curves.easeOutQuart,
+      ),
+    );
+    _listAnimationController.forward();
+  }
+
+  @override
+  void dispose() {
+    _listAnimationController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final categoryData = widget.category.data() as Map<String, dynamic>;
+    final categoryName = categoryData['name']?.toString() ?? 'Category';
+
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar(
+            pinned: true,
+            expandedHeight: 120.0,
+            backgroundColor: primaryColor,
+            iconTheme: IconThemeData(color: Colors.white),
+            flexibleSpace: FlexibleSpaceBar(
+              titlePadding: EdgeInsets.only(left: 60, bottom: 16),
+              title: Text(
+                categoryName,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 20,
+                  color: Colors.white,
+                ),
+              ),
+              background: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [primaryColor, primaryColor.withOpacity(0.7)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          SliverPadding(
+            padding: EdgeInsets.all(16),
+            sliver: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('menu_items')
+                  .where('categoryId', isEqualTo: categoryName)
+                  .where('branchId', isEqualTo: 'Old_Airport')
+                  .where('isAvailable', isEqualTo: true)
+                  .orderBy('sortOrder')
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return SliverToBoxAdapter(
+                    child: _buildErrorState('Error loading items'),
+                  );
+                }
+
+                if (!snapshot.hasData) {
+                  return SliverToBoxAdapter(
+                    child: _buildLoadingState(),
+                  );
+                }
+
+                final items = snapshot.data!.docs;
+
+                if (items.isEmpty) {
+                  return SliverToBoxAdapter(
+                    child: _buildEmptyState(
+                      'No Items Available',
+                      'Items in this category will appear here',
+                      Icons.restaurant_menu_outlined,
+                    ),
+                  );
+                }
+
+                return SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                      return FadeTransition(
+                        opacity: _listAnimation,
+                        child: SlideTransition(
+                          position: Tween<Offset>(
+                            begin: Offset(0, 0.3),
+                            end: Offset.zero,
+                          ).animate(
+                            CurvedAnimation(
+                              parent: _listAnimationController,
+                              curve: Interval(
+                                index * 0.1,
+                                1.0,
+                                curve: Curves.easeOutQuart,
+                              ),
+                            ),
+                          ),
+                          child: _buildMenuItem(items[index]),
+                        ),
+                      );
+                    },
+                    childCount: items.length,
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMenuItem(QueryDocumentSnapshot item) {
+    final itemData = item.data() as Map<String, dynamic>;
+    final name = itemData['name']?.toString() ?? 'Unknown Item';
+    final description = itemData['description']?.toString() ?? '';
+    final price = (itemData['price'] as num?)?.toDouble() ?? 0.0;
+    final estimatedTime = itemData['EstimatedTime']?.toString() ?? '';
+    final imageUrl = itemData['imageUrl']?.toString();
+    final isPopular = itemData['isPopular'] ?? false;
+
+    return Container(
+      margin: EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(16),
+        child: Row(
+          children: [
+            // Image Section
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      primaryColor.withOpacity(0.1),
+                      primaryColor.withOpacity(0.05),
+                    ],
+                  ),
+                ),
+                child: imageUrl != null
+                    ? Image.network(
+                  imageUrl,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) =>
+                      _buildMenuPlaceholder(),
+                )
+                    : _buildMenuPlaceholder(),
+              ),
+            ),
+
+            SizedBox(width: 16),
+
+            // Content Section
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          name,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: Colors.grey[800],
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (isPopular)
+                        Container(
+                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.amber[100],
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.star, size: 12, color: Colors.amber[700]),
+                              SizedBox(width: 2),
+                              Text(
+                                'Popular',
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.amber[700],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+
+                  if (description.isNotEmpty) ...[
+                    SizedBox(height: 4),
+                    Text(
+                      description,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey[600],
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+
+                  SizedBox(height: 8),
+
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '\$${price.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                              color: primaryColor,
+                            ),
+                          ),
+                          if (estimatedTime.isNotEmpty)
+                            Row(
+                              children: [
+                                Icon(Icons.access_time, size: 12, color: Colors.grey[500]),
+                                SizedBox(width: 4),
+                                Text(
+                                  '$estimatedTime mins',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey[500],
+                                  ),
+                                ),
+                              ],
+                            ),
+                        ],
+                      ),
+
+                      Container(
+                        padding: EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: primaryColor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          Icons.info_outline,
+                          color: primaryColor,
+                          size: 20,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenuPlaceholder() {
+    return Container(
+      child: Center(
+        child: Icon(
+          Icons.restaurant_menu,
+          size: 32,
+          color: primaryColor.withOpacity(0.6),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return Container(
+      height: 300,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(color: primaryColor),
+            SizedBox(height: 16),
+            Text(
+              'Loading Items...',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey[600],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorState(String message) {
+    return Container(
+      height: 300,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, size: 64, color: Colors.red[300]),
+            SizedBox(height: 16),
+            Text(
+              message,
+              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(String title, String subtitle, IconData icon) {
+    return Container(
+      height: 300,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 80, color: Colors.grey[300]),
+            SizedBox(height: 16),
+            Text(
+              title,
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[700],
+              ),
+            ),
+            SizedBox(height: 8),
+            Text(
+              subtitle,
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey[500],
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class AllMenuItemsTab extends StatefulWidget {
+  @override
+  _AllMenuItemsTabState createState() => _AllMenuItemsTabState();
+}
+
+class _AllMenuItemsTabState extends State<AllMenuItemsTab>
+    with AutomaticKeepAliveClientMixin {
+  final Color primaryColor = Color(0xFF1976D2);
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  String _sortBy = 'name';
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(() {
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return Container(
+      padding: EdgeInsets.all(16),
+      child: Column(
+        children: [
+          // Search and Filter Section
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 10,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search all items...',
+                      hintStyle: TextStyle(color: Colors.grey[500]),
+                      prefixIcon: Icon(Icons.search, color: primaryColor),
+                      suffixIcon: _searchQuery.isNotEmpty
+                          ? IconButton(
+                        icon: Icon(Icons.clear, color: Colors.grey),
+                        onPressed: () {
+                          _searchController.clear();
+                          setState(() {
+                            _searchQuery = '';
+                          });
+                        },
+                      )
+                          : null,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      filled: true,
+                      fillColor: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(width: 12),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: PopupMenuButton<String>(
+                  icon: Icon(Icons.sort, color: primaryColor),
+                  onSelected: (value) {
+                    setState(() {
+                      _sortBy = value;
+                    });
+                  },
+                  itemBuilder: (context) => [
+                    PopupMenuItem(
+                      value: 'name',
+                      child: Row(
+                        children: [
+                          Icon(Icons.sort_by_alpha, size: 18),
+                          SizedBox(width: 8),
+                          Text('Name'),
+                        ],
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'price',
+                      child: Row(
+                        children: [
+                          Icon(Icons.attach_money, size: 18),
+                          SizedBox(width: 8),
+                          Text('Price'),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          SizedBox(height: 16),
+
+          // Items List
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('menu_items')
+                  .where('isAvailable', isEqualTo: true)
+                  .where('branchId', isEqualTo: 'Old_Airport')
+                  .orderBy(_sortBy)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return _buildErrorState('Error loading menu items');
+                }
+
+                if (!snapshot.hasData) {
+                  return _buildLoadingState();
+                }
+
+                final allItems = snapshot.data!.docs;
+
+                // Apply search filter
+                final filteredItems = allItems.where((item) {
+                  if (_searchQuery.isEmpty) return true;
+
+                  final itemData = item.data() as Map<String, dynamic>;
+                  final name = itemData['name']?.toString().toLowerCase() ?? '';
+                  final description = itemData['description']?.toString().toLowerCase() ?? '';
+
+                  return name.contains(_searchQuery) || description.contains(_searchQuery);
+                }).toList();
+
+                if (filteredItems.isEmpty) {
+                  return _buildEmptyState(
+                    _searchQuery.isNotEmpty ? 'No items found' : 'No Menu Items',
+                    _searchQuery.isNotEmpty
+                        ? 'Try different search terms'
+                        : 'Menu items will appear here',
+                    Icons.restaurant_menu_outlined,
+                  );
+                }
+
+                return ListView.builder(
+                  itemCount: filteredItems.length,
+                  itemBuilder: (context, index) {
+                    return _buildMenuItem(filteredItems[index]);
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMenuItem(QueryDocumentSnapshot item) {
+    final itemData = item.data() as Map<String, dynamic>;
+    final name = itemData['name']?.toString() ?? 'Unknown Item';
+    final description = itemData['description']?.toString() ?? '';
+    final price = (itemData['price'] as num?)?.toDouble() ?? 0.0;
+    final estimatedTime = itemData['EstimatedTime']?.toString() ?? '';
+    final imageUrl = itemData['imageUrl']?.toString();
+    final isPopular = itemData['isPopular'] ?? false;
+    final categoryId = itemData['categoryId']?.toString() ?? '';
+
+    return Container(
+      margin: EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(16),
+        child: Row(
+          children: [
+            // Image Section
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      primaryColor.withOpacity(0.1),
+                      primaryColor.withOpacity(0.05),
+                    ],
+                  ),
+                ),
+                child: imageUrl != null
+                    ? Image.network(
+                  imageUrl,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) =>
+                      _buildMenuPlaceholder(),
+                )
+                    : _buildMenuPlaceholder(),
+              ),
+            ),
+
+            SizedBox(width: 16),
+
+            // Content Section
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          name,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: Colors.grey[800],
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (isPopular)
+                        Container(
+                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.amber[100],
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.star, size: 10, color: Colors.amber[700]),
+                              SizedBox(width: 2),
+                              Text(
+                                'Popular',
+                                style: TextStyle(
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.amber[700],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+
+                  if (categoryId.isNotEmpty) ...[
+                    SizedBox(height: 2),
+                    Container(
+                      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: primaryColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        categoryId,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: primaryColor,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+
+                  if (description.isNotEmpty) ...[
+                    SizedBox(height: 4),
+                    Text(
+                      description,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+
+                  SizedBox(height: 8),
+
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '\$${price.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: primaryColor,
+                            ),
+                          ),
+                          if (estimatedTime.isNotEmpty)
+                            Row(
+                              children: [
+                                Icon(Icons.access_time, size: 12, color: Colors.grey[500]),
+                                SizedBox(width: 4),
+                                Text(
+                                  '$estimatedTime mins',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.grey[500],
+                                  ),
+                                ),
+                              ],
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenuPlaceholder() {
+    return Container(
+      child: Center(
+        child: Icon(
+          Icons.restaurant_menu,
+          size: 32,
+          color: primaryColor.withOpacity(0.6),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          CircularProgressIndicator(color: primaryColor),
+          SizedBox(height: 16),
+          Text(
+            'Loading Menu Items...',
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey[600],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState(String message) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.error_outline, size: 64, color: Colors.red[300]),
+          SizedBox(height: 16),
+          Text(
+            message,
+            style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(String title, String subtitle, IconData icon) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 80, color: Colors.grey[300]),
+          SizedBox(height: 16),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[700],
+            ),
+          ),
+          SizedBox(height: 8),
+          Text(
+            subtitle,
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey[500],
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 
 
 
