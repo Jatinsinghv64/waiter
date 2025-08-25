@@ -3,6 +3,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 
 import 'firebase_options.dart';
 
@@ -50,16 +52,100 @@ class AuthWrapper extends StatelessWidget {
 }
 
 // Login Screen
+
+
 class LoginScreen extends StatefulWidget {
   @override
   _LoginScreenState createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends State<LoginScreen>
+    with TickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+
   bool _isLoading = false;
+  bool _obscurePassword = true;
+  bool _rememberMe = false;
+
+  late AnimationController _animationController;
+  late AnimationController _shakeController;
+  late Animation<double> _fadeAnimation;
+  late Animation<double> _slideAnimation;
+  late Animation<double> _scaleAnimation;
+  late Animation<double> _shakeAnimation;
+
+  final Color primaryColor = Color(0xFF1976D2);
+  final Color secondaryColor = Color(0xFFE3F2FD);
+
+  @override
+  void initState() {
+    super.initState();
+    _setupAnimations();
+    _startAnimations();
+  }
+
+  void _setupAnimations() {
+    _animationController = AnimationController(
+      duration: Duration(milliseconds: 1200),
+      vsync: this,
+    );
+
+    _shakeController = AnimationController(
+      duration: Duration(milliseconds: 500),
+      vsync: this,
+    );
+
+    _fadeAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Interval(0.0, 0.6, curve: Curves.easeOut),
+    ));
+
+    _slideAnimation = Tween<double>(
+      begin: 50.0,
+      end: 0.0,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Interval(0.2, 0.8, curve: Curves.elasticOut),
+    ));
+
+    _scaleAnimation = Tween<double>(
+      begin: 0.8,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Interval(0.4, 1.0, curve: Curves.elasticOut),
+    ));
+
+    _shakeAnimation = Tween<double>(
+      begin: 0.0,
+      end: 10.0,
+    ).animate(CurvedAnimation(
+      parent: _shakeController,
+      curve: Curves.elasticIn,
+    ))..addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        _shakeController.reverse();
+      }
+    });
+  }
+
+  void _startAnimations() {
+    _animationController.forward();
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    _shakeController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
 
   Future<void> _login() async {
     if (_formKey.currentState!.validate()) {
@@ -71,52 +157,541 @@ class _LoginScreenState extends State<LoginScreen> {
         );
       } on FirebaseAuthException catch (e) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Login failed: ${e.message}')),
-        );
+        _shakeController.forward();
+
+        String errorMessage = 'Login failed';
+        switch (e.code) {
+          case 'user-not-found':
+            errorMessage = 'No user found with this email';
+            break;
+          case 'wrong-password':
+            errorMessage = 'Incorrect password';
+            break;
+          case 'invalid-email':
+            errorMessage = 'Invalid email address';
+            break;
+          case 'user-disabled':
+            errorMessage = 'This account has been disabled';
+            break;
+          case 'too-many-requests':
+            errorMessage = 'Too many attempts. Please try again later';
+            break;
+          default:
+            errorMessage = e.message ?? 'Login failed';
+        }
+
+        _showErrorSnackBar(errorMessage);
+      } catch (e) {
+        setState(() => _isLoading = false);
+        _showErrorSnackBar('An unexpected error occurred');
       }
+    } else {
+      _shakeController.forward();
     }
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.error_outline, color: Colors.white),
+            SizedBox(width: 8),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: Colors.red[600],
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+        margin: EdgeInsets.all(16),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Waiter Login')),
-      body: Padding(
-        padding: EdgeInsets.all(20),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              primaryColor,
+              primaryColor.withOpacity(0.8),
+              Colors.white,
+            ],
+            stops: [0.0, 0.5, 1.0],
+          ),
+        ),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            physics: BouncingScrollPhysics(),
+            child: Container(
+              height: MediaQuery.of(context).size.height -
+                  MediaQuery.of(context).padding.top,
+              child: AnimatedBuilder(
+                animation: _animationController,
+                builder: (context, child) {
+                  return Transform.translate(
+                    offset: Offset(0, _slideAnimation.value),
+                    child: Opacity(
+                      opacity: _fadeAnimation.value,
+                      child: Transform.scale(
+                        scale: _scaleAnimation.value,
+                        child: _buildLoginContent(),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoginContent() {
+    return Padding(
+      padding: EdgeInsets.all(24),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _buildLogo(),
+          SizedBox(height: 40),
+          _buildWelcomeText(),
+          SizedBox(height: 40),
+          AnimatedBuilder(
+            animation: _shakeAnimation,
+            builder: (context, child) {
+              return Transform.translate(
+                offset: Offset(_shakeAnimation.value, 0),
+                child: _buildLoginCard(),
+              );
+            },
+          ),
+          SizedBox(height: 24),
+          _buildForgotPassword(),
+          SizedBox(height: 40),
+          _buildSocialLogin(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLogo() {
+    return Hero(
+      tag: 'app_logo',
+      child: Container(
+        width: 120,
+        height: 120,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black12,
+              blurRadius: 20,
+              offset: Offset(0, 10),
+            ),
+          ],
+        ),
+        child: Icon(
+          Icons.restaurant_menu,
+          size: 60,
+          color: primaryColor,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWelcomeText() {
+    return Column(
+      children: [
+        Text(
+          'Welcome Back!',
+          style: TextStyle(
+            fontSize: 32,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+            shadows: [
+              Shadow(
+                blurRadius: 10.0,
+                color: Colors.black26,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: 8),
+        Text(
+          'Sign in to continue to your account',
+          style: TextStyle(
+            fontSize: 16,
+            color: Colors.white70,
+            fontWeight: FontWeight.w300,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLoginCard() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 15,
+            offset: Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(24),
         child: Form(
           key: _formKey,
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              TextFormField(
-                controller: _emailController,
-                decoration: InputDecoration(labelText: 'Email'),
-                validator: (value) =>
-                value!.isEmpty ? 'Please enter email' : null,
-              ),
+              _buildEmailField(),
               SizedBox(height: 20),
-              TextFormField(
-                controller: _passwordController,
-                decoration: InputDecoration(labelText: 'Password'),
-                obscureText: true,
-                validator: (value) =>
-                value!.isEmpty ? 'Please enter password' : null,
-              ),
-              SizedBox(height: 30),
-              _isLoading
-                  ? CircularProgressIndicator()
-                  : ElevatedButton(
-                onPressed: _login,
-                child: Text('Login'),
-              ),
+              _buildPasswordField(),
+              SizedBox(height: 16),
+              _buildRememberMe(),
+              SizedBox(height: 24),
+              _buildLoginButton(),
             ],
           ),
         ),
       ),
     );
   }
+
+  Widget _buildEmailField() {
+    return TextFormField(
+      controller: _emailController,
+      keyboardType: TextInputType.emailAddress,
+      decoration: InputDecoration(
+        labelText: 'Email Address',
+        hintText: 'Enter your email',
+        prefixIcon: Icon(Icons.email_outlined, color: primaryColor),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.grey[300]!),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: primaryColor, width: 2),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.red, width: 2),
+        ),
+        filled: true,
+        fillColor: Colors.grey[50],
+      ),
+      validator: (value) {
+        if (value == null || value.isEmpty) {
+          return 'Please enter your email';
+        }
+        if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
+          return 'Please enter a valid email';
+        }
+        return null;
+      },
+    );
+  }
+
+  Widget _buildPasswordField() {
+    return TextFormField(
+      controller: _passwordController,
+      obscureText: _obscurePassword,
+      decoration: InputDecoration(
+        labelText: 'Password',
+        hintText: 'Enter your password',
+        prefixIcon: Icon(Icons.lock_outline, color: primaryColor),
+        suffixIcon: IconButton(
+          icon: Icon(
+            _obscurePassword ? Icons.visibility_off : Icons.visibility,
+            color: Colors.grey[600],
+          ),
+          onPressed: () {
+            setState(() {
+              _obscurePassword = !_obscurePassword;
+            });
+          },
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.grey[300]!),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: primaryColor, width: 2),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.red, width: 2),
+        ),
+        filled: true,
+        fillColor: Colors.grey[50],
+      ),
+      validator: (value) {
+        if (value == null || value.isEmpty) {
+          return 'Please enter your password';
+        }
+        if (value.length < 6) {
+          return 'Password must be at least 6 characters';
+        }
+        return null;
+      },
+    );
+  }
+
+  Widget _buildRememberMe() {
+    return Row(
+      children: [
+        Checkbox(
+          value: _rememberMe,
+          onChanged: (value) {
+            setState(() {
+              _rememberMe = value ?? false;
+            });
+          },
+          activeColor: primaryColor,
+        ),
+        Text(
+          'Remember me',
+          style: TextStyle(
+            color: Colors.grey[600],
+            fontSize: 14,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLoginButton() {
+    return Container(
+      width: double.infinity,
+      height: 56,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [primaryColor, primaryColor.withOpacity(0.8)],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: primaryColor.withOpacity(0.3),
+            blurRadius: 8,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ElevatedButton(
+        onPressed: _isLoading ? null : _login,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.transparent,
+          shadowColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        child: _isLoading
+            ? SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(
+            color: Colors.white,
+            strokeWidth: 2,
+          ),
+        )
+            : Text(
+          'Sign In',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildForgotPassword() {
+    return TextButton(
+      onPressed: () {
+        _showForgotPasswordDialog();
+      },
+      child: Text(
+        'Forgot your password?',
+        style: TextStyle(
+          color: Colors.white70,
+          fontSize: 14,
+          decoration: TextDecoration.underline,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSocialLogin() {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(child: Divider(color: Colors.white70)),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: Text(
+                'Or continue with',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+            Expanded(child: Divider(color: Colors.white70)),
+          ],
+        ),
+        SizedBox(height: 20),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            _buildSocialButton(
+              icon: Icons.g_mobiledata,
+              label: 'Google',
+              color: Colors.red,
+              onTap: () {
+                // Implement Google Sign In
+                _showComingSoonSnackBar('Google Sign In');
+              },
+            ),
+            _buildSocialButton(
+              icon: Icons.apple,
+              label: 'Apple',
+              color: Colors.black,
+              onTap: () {
+                // Implement Apple Sign In
+                _showComingSoonSnackBar('Apple Sign In');
+              },
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSocialButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 120,
+        padding: EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black12,
+              blurRadius: 8,
+              offset: Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: color, size: 20),
+            SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                color: Colors.black87,
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showForgotPasswordDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Text('Reset Password'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Enter your email to receive password reset instructions.'),
+              SizedBox(height: 16),
+              TextFormField(
+                decoration: InputDecoration(
+                  labelText: 'Email',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _showComingSoonSnackBar('Password reset');
+              },
+              child: Text('Send Reset Email'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showComingSoonSnackBar(String feature) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.info_outline, color: Colors.white),
+            SizedBox(width: 8),
+            Text('$feature coming soon!'),
+          ],
+        ),
+        backgroundColor: primaryColor,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+        margin: EdgeInsets.all(16),
+      ),
+    );
+  }
 }
+
 
 // Main Waiter App
 class MainWaiterApp extends StatefulWidget {
@@ -126,6 +701,8 @@ class MainWaiterApp extends StatefulWidget {
 
 class _MainWaiterAppState extends State<MainWaiterApp> {
   int _selectedIndex = 0;
+  final Color primaryColor = Color(0xFF1976D2);
+
   final List<Widget> _screens = [
     TablesScreen(),
     ActiveOrdersScreen(),
@@ -134,58 +711,160 @@ class _MainWaiterAppState extends State<MainWaiterApp> {
   ];
 
   void _onItemTapped(int index) {
-    setState(() => _selectedIndex = index);
+    setState(() {
+      _selectedIndex = index;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Waiter App'),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.logout),
-            onPressed: () => FirebaseAuth.instance.signOut(),
-          ),
-        ],
+      // No global appBar - each screen handles its own
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: _screens,
       ),
-      body: _screens[_selectedIndex],
-      bottomNavigationBar: BottomNavigationBar(
-        type: BottomNavigationBarType.fixed, // Add this line
-        backgroundColor: Colors.blue, // Optional: set background color
-        selectedItemColor: Colors.white, // Optional: set selected color
-        unselectedItemColor: Colors.white70, // Optional: set unselected color
-        items: [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.table_restaurant),
-            label: 'Tables',
+      bottomNavigationBar: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(20),
+            topRight: Radius.circular(20),
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.list_alt),
-            label: 'Orders',
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 10,
+              offset: Offset(0, -2),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(20),
+            topRight: Radius.circular(20),
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.menu_book),
-            label: 'Menu',
+          child: BottomNavigationBar(
+            type: BottomNavigationBarType.fixed,
+            backgroundColor: primaryColor,
+            selectedItemColor: Colors.white,
+            unselectedItemColor: Colors.white70,
+            currentIndex: _selectedIndex,
+            onTap: _onItemTapped,
+            elevation: 0,
+            selectedFontSize: 12,
+            unselectedFontSize: 10,
+            items: [
+              BottomNavigationBarItem(
+                icon: Container(
+                  padding: EdgeInsets.all(4),
+                  child: Icon(Icons.table_restaurant),
+                ),
+                activeIcon: Container(
+                  padding: EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.table_restaurant),
+                ),
+                label: 'Tables',
+              ),
+              BottomNavigationBarItem(
+                icon: Container(
+                  padding: EdgeInsets.all(4),
+                  child: Icon(Icons.receipt_long_outlined),
+                ),
+                activeIcon: Container(
+                  padding: EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.receipt_long),
+                ),
+                label: 'Orders',
+              ),
+              BottomNavigationBarItem(
+                icon: Container(
+                  padding: EdgeInsets.all(4),
+                  child: Icon(Icons.menu_book_outlined),
+                ),
+                activeIcon: Container(
+                  padding: EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.menu_book),
+                ),
+                label: 'Menu',
+              ),
+              BottomNavigationBarItem(
+                icon: Container(
+                  padding: EdgeInsets.all(4),
+                  child: Icon(Icons.shopping_bag_outlined),
+                ),
+                activeIcon: Container(
+                  padding: EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.shopping_bag),
+                ),
+                label: 'Takeaway',
+              ),
+            ],
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.takeout_dining), // Better icon for takeaway
-            label: 'Take Away',
-          ),
-        ],
-        currentIndex: _selectedIndex,
-        onTap: _onItemTapped,
+        ),
       ),
     );
   }
 }
 
+
 // Tables Screen - Using CustomScrollView (Most Robust)
-// Tables Screen - Fixed Pixel Overflow
-class TablesScreen extends StatelessWidget {
+
+
+
+
+class TablesScreen extends StatefulWidget {
+  @override
+  _TablesScreenState createState() => _TablesScreenState();
+}
+
+class _TablesScreenState extends State<TablesScreen>
+    with TickerProviderStateMixin {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final Color primaryColor = Color(0xFF1976D2);
   final Color secondaryColor = Color(0xFFE3F2FD);
+
+  late AnimationController _refreshController;
+  late AnimationController _statsController;
+  String _selectedFilter = 'all';
+  bool _isGridView = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshController = AnimationController(
+      duration: Duration(milliseconds: 1000),
+      vsync: this,
+    );
+    _statsController = AnimationController(
+      duration: Duration(milliseconds: 800),
+      vsync: this,
+    );
+    _statsController.forward();
+  }
+
+  @override
+  void dispose() {
+    _refreshController.dispose();
+    _statsController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -193,204 +872,811 @@ class TablesScreen extends StatelessWidget {
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
+            colors: [Colors.grey[50]!, Colors.white],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Colors.white, secondaryColor],
           ),
         ),
         child: StreamBuilder<DocumentSnapshot>(
           stream: _firestore.collection('Branch').doc('Old_Airport').snapshots(),
           builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return _buildErrorState();
+            }
+
             if (!snapshot.hasData || !snapshot.data!.exists) {
-              return Center(child: CircularProgressIndicator());
+              return _buildLoadingState();
             }
 
             final branchData = snapshot.data!.data() as Map<String, dynamic>;
             final tables = branchData['Tables'] as Map<String, dynamic>? ?? {};
-            final tableList = tables.entries.toList();
+            final filteredTables = _getFilteredTablesList(tables);
 
-            return Column(
-              children: [
-                // Fixed Header with proper padding
-                Container(
-                  padding: EdgeInsets.fromLTRB(16, MediaQuery.of(context).padding.top + 16, 16, 16),
-                  color: Colors.white,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Table Management',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: primaryColor,
-                        ),
-                      ),
-                      SizedBox(height: 4),
-                      Text(
-                        'Tap on a table to take order',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                // GridView with proper constraints
-                Expanded(
-                  child: Padding(
-                    padding: EdgeInsets.all(16),
-                    child: GridView.builder(
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 3,
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
-                        childAspectRatio: 0.85, // Adjusted for better fit
-                      ),
-                      itemCount: tableList.length,
-                      itemBuilder: (context, index) {
-                        final tableEntry = tableList[index];
-                        final tableNumber = tableEntry.key;
-                        final tableData = tableEntry.value as Map<String, dynamic>;
-                        final status = tableData['status']?.toString() ?? 'available';
-                        final seats = tableData['seats']?.toString() ?? '0';
-                        final currentOrderId = tableData['currentOrderId']?.toString();
-
-                        Color statusColor;
-                        IconData statusIcon;
-                        String statusText;
-
-                        switch (status) {
-                          case 'occupied':
-                            statusColor = Colors.orange;
-                            statusIcon = Icons.group;
-                            statusText = 'Occupied';
-                            break;
-                          case 'needs_attention':
-                            statusColor = Colors.red;
-                            statusIcon = Icons.warning;
-                            statusText = 'Needs Help';
-                            break;
-                          case 'ordered':
-                            statusColor = Colors.green;
-                            statusIcon = Icons.restaurant;
-                            statusText = 'Ordered';
-                            break;
-                          default:
-                            statusColor = primaryColor;
-                            statusIcon = Icons.event_available;
-                            statusText = 'Available';
-                        }
-
-                        return GestureDetector(
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => OrderScreen(
-                                  tableNumber: tableNumber,
-                                  tableData: Map<String, dynamic>.from(tableData),
-                                  existingOrderId: currentOrderId,
-                                  isAddingToExisting: status == 'ordered',
-                                ),
-                              ),
-                            );
-                          },
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(16),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black12,
-                                  blurRadius: 8,
-                                  offset: Offset(0, 2),
-                                ),
-                              ],
-                              border: Border.all(
-                                color: statusColor.withOpacity(0.3),
-                                width: 2,
-                              ),
-                            ),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Container(
-                                  width: 36,
-                                  height: 36,
-                                  decoration: BoxDecoration(
-                                    color: statusColor.withOpacity(0.1),
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: statusColor,
-                                      width: 1.5,
-                                    ),
-                                  ),
-                                  child: Icon(
-                                    statusIcon,
-                                    color: statusColor,
-                                    size: 18,
-                                  ),
-                                ),
-                                SizedBox(height: 6),
-                                Text(
-                                  'Table $tableNumber',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                    color: primaryColor,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                SizedBox(height: 2),
-                                Text(
-                                  '$seats Seats',
-                                  style: TextStyle(
-                                    fontSize: 9,
-                                    color: Colors.grey[600],
-                                  ),
-                                ),
-                                SizedBox(height: 4),
-                                Container(
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                    vertical: 1,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: statusColor.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    statusText,
-                                    style: TextStyle(
-                                      fontSize: 8,
-                                      color: statusColor,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              ],
+            return RefreshIndicator(
+              onRefresh: _handleRefresh,
+              color: primaryColor,
+              child: CustomScrollView(
+                physics: BouncingScrollPhysics(),
+                slivers: [
+                  _buildAppBar(),
+                  _buildQuickStats(tables),
+                  _buildFilterChips(tables),
+                  _buildViewToggle(),
+                  _isGridView
+                      ? _buildTablesGrid(filteredTables)
+                      : _buildTablesList(filteredTables),
+                  SliverToBoxAdapter(child: SizedBox(height: 100)),
+                ],
+              ),
             );
           },
         ),
       ),
     );
   }
+
+  Widget _buildErrorState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.red[50],
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.error_outline, size: 64, color: Colors.red[400]),
+          ),
+          SizedBox(height: 24),
+          Text(
+            'Oops! Something went wrong',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[800],
+            ),
+          ),
+          SizedBox(height: 8),
+          Text(
+            'Unable to load restaurant tables',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey[600],
+            ),
+          ),
+          SizedBox(height: 24),
+          ElevatedButton.icon(
+            onPressed: () => _handleRefresh(),
+            icon: Icon(Icons.refresh),
+            label: Text('Try Again'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primaryColor,
+              foregroundColor: Colors.white,
+              padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(25),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 80,
+            height: 80,
+            child: CircularProgressIndicator(
+              color: primaryColor,
+              strokeWidth: 3,
+            ),
+          ),
+          SizedBox(height: 24),
+          Text(
+            'Loading Tables...',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey[700],
+            ),
+          ),
+          SizedBox(height: 8),
+          Text(
+            'Please wait while we fetch the latest data',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[500],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAppBar() {
+    return SliverAppBar(
+      pinned: true,
+      floating: false,
+      expandedHeight: 140.0,
+      backgroundColor: primaryColor,
+      automaticallyImplyLeading: false,
+      elevation: 0,
+      flexibleSpace: FlexibleSpaceBar(
+        titlePadding: EdgeInsets.only(left: 20, bottom: 20),
+        title: Text(
+          'Restaurant Tables',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 24,
+            color: Colors.white,
+            shadows: [
+              Shadow(
+                offset: Offset(0, 1),
+                blurRadius: 3,
+                color: Colors.black26,
+              ),
+            ],
+          ),
+        ),
+        background: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                primaryColor,
+                primaryColor.withOpacity(0.8),
+                primaryColor.withOpacity(0.6),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        AnimatedBuilder(
+          animation: _refreshController,
+          builder: (context, child) {
+            return Transform.rotate(
+              angle: _refreshController.value * 2 * 3.14159,
+              child: IconButton(
+                icon: Icon(Icons.refresh_rounded, color: Colors.white, size: 26),
+                onPressed: _handleRefresh,
+              ),
+            );
+          },
+        ),
+        PopupMenuButton<String>(
+          icon: Icon(Icons.more_vert_rounded, color: Colors.white, size: 26),
+          offset: Offset(0, 50),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          onSelected: (value) {
+            if (value == 'logout') {
+              _showLogoutDialog(context);
+            }
+          },
+          itemBuilder: (context) => [
+            PopupMenuItem(
+              value: 'logout',
+              child: Row(
+                children: [
+                  Icon(Icons.logout_rounded, color: Colors.red, size: 20),
+                  SizedBox(width: 12),
+                  Text('Sign Out', style: TextStyle(fontWeight: FontWeight.w500)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        SizedBox(width: 8),
+      ],
+    );
+  }
+
+  Widget _buildQuickStats(Map<String, dynamic> tables) {
+    return SliverToBoxAdapter(
+      child: AnimatedBuilder(
+        animation: _statsController,
+        builder: (context, child) {
+          return Transform.translate(
+            offset: Offset(0, 50 * (1 - _statsController.value)),
+            child: Opacity(
+              opacity: _statsController.value,
+              child: Container(
+                margin: EdgeInsets.all(20),
+                padding: EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.08),
+                      blurRadius: 20,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildQuickStat('Total', tables.length, primaryColor, Icons.restaurant),
+                    _buildVerticalDivider(),
+                    _buildQuickStat('Available', _getStatusCount(tables, 'available'), Colors.green, Icons.check_circle),
+                    _buildVerticalDivider(),
+                    _buildQuickStat('Occupied', _getStatusCount(tables, 'occupied'), Colors.orange, Icons.group),
+                    _buildVerticalDivider(),
+                    _buildQuickStat('Ordered', _getStatusCount(tables, 'ordered'), Colors.blue, Icons.restaurant_menu),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildVerticalDivider() {
+    return Container(
+      height: 40,
+      width: 1,
+      color: Colors.grey[300],
+    );
+  }
+
+  Widget _buildQuickStat(String label, int count, Color color, IconData icon) {
+    return Column(
+      children: [
+        Container(
+          padding: EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, color: color, size: 20),
+        ),
+        SizedBox(height: 8),
+        Text(
+          count.toString(),
+          style: TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            color: Colors.grey[600],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFilterChips(Map<String, dynamic> tables) {
+    final filterData = [
+      {'label': 'All', 'value': 'all', 'count': tables.length},
+      {'label': 'Available', 'value': 'available', 'count': _getStatusCount(tables, 'available')},
+      {'label': 'Occupied', 'value': 'occupied', 'count': _getStatusCount(tables, 'occupied')},
+      {'label': 'Ordered', 'value': 'ordered', 'count': _getStatusCount(tables, 'ordered')},
+    ];
+
+    return SliverToBoxAdapter(
+      child: Container(
+        height: 60,
+        child: ListView.builder(
+          scrollDirection: Axis.horizontal,
+          padding: EdgeInsets.symmetric(horizontal: 20),
+          itemCount: filterData.length,
+          itemBuilder: (context, index) {
+            final filter = filterData[index];
+            final isSelected = _selectedFilter == filter['value'];
+
+            return Padding(
+              padding: EdgeInsets.only(right: 12),
+              child: GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _selectedFilter = filter['value'] as String;
+                  });
+                  HapticFeedback.selectionClick();
+                },
+                child: AnimatedContainer(
+                  duration: Duration(milliseconds: 200),
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: isSelected ? primaryColor : Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: isSelected ? primaryColor : Colors.grey[300]!,
+                      width: 1.5,
+                    ),
+                    boxShadow: isSelected ? [
+                      BoxShadow(
+                        color: primaryColor.withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: Offset(0, 2),
+                      ),
+                    ] : [],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        filter['label'] as String,
+                        style: TextStyle(
+                          color: isSelected ? Colors.white : Colors.grey[700],
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                      ),
+                      SizedBox(width: 6),
+                      Container(
+                        padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: isSelected ? Colors.white.withOpacity(0.2) : primaryColor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          (filter['count'] as int).toString(),
+                          style: TextStyle(
+                            color: isSelected ? Colors.white : primaryColor,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildViewToggle() {
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Tables',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey[800],
+              ),
+            ),
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 4,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildViewButton(Icons.grid_view, true),
+                  _buildViewButton(Icons.list, false),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildViewButton(IconData icon, bool isGrid) {
+    final isSelected = _isGridView == isGrid;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _isGridView = isGrid;
+        });
+        HapticFeedback.selectionClick();
+      },
+      child: AnimatedContainer(
+        duration: Duration(milliseconds: 200),
+        padding: EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: isSelected ? primaryColor : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Icon(
+          icon,
+          color: isSelected ? Colors.white : Colors.grey[600],
+          size: 20,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTablesGrid(List<MapEntry<String, dynamic>> filteredTables) {
+    return SliverPadding(
+      padding: EdgeInsets.symmetric(horizontal: 20),
+      sliver: SliverGrid(
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: MediaQuery.of(context).size.width > 600 ? 4 : 3,
+          crossAxisSpacing: 16,
+          mainAxisSpacing: 16,
+          childAspectRatio: 0.7, // Changed from 0.85 to 0.7 to make cards taller
+        ),
+        delegate: SliverChildBuilderDelegate(
+              (context, index) {
+            final entry = filteredTables[index];
+            return _buildTableCard(
+              context,
+              entry.key,
+              entry.value as Map<String, dynamic>,
+            );
+          },
+          childCount: filteredTables.length,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTablesList(List<MapEntry<String, dynamic>> filteredTables) {
+    return SliverPadding(
+      padding: EdgeInsets.symmetric(horizontal: 20),
+      sliver: SliverList(
+        delegate: SliverChildBuilderDelegate(
+              (context, index) {
+            final entry = filteredTables[index];
+            return Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: _buildTableListItem(
+                context,
+                entry.key,
+                entry.value as Map<String, dynamic>,
+              ),
+            );
+          },
+          childCount: filteredTables.length,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTableCard(BuildContext context, String tableNumber, Map<String, dynamic> tableData) {
+    final status = tableData['status']?.toString() ?? 'available';
+    final seats = tableData['seats']?.toString() ?? '0';
+    final currentOrderId = tableData['currentOrderId']?.toString();
+    final tableInfo = _getTableStatusInfo(status);
+
+    return GestureDetector(
+      onTap: () => _navigateToOrderScreen(context, tableNumber, tableData, currentOrderId, status),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: tableInfo.color.withOpacity(0.15),
+              blurRadius: 12,
+              offset: Offset(0, 6),
+            ),
+          ],
+          border: Border.all(
+            color: tableInfo.color.withOpacity(0.2),
+            width: 1.5,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    tableInfo.color,
+                    tableInfo.color.withOpacity(0.7),
+                  ],
+                ),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: tableInfo.color.withOpacity(0.3),
+                    blurRadius: 8,
+                    offset: Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: Icon(
+                tableInfo.icon,
+                color: Colors.white,
+                size: 24,
+              ),
+            ),
+            SizedBox(height: 12),
+            Text(
+              'Table $tableNumber',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: Colors.grey[800],
+              ),
+            ),
+            Text(
+              '$seats Seats',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[500],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            SizedBox(height: 8),
+            Container(
+              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    tableInfo.color.withOpacity(0.1),
+                    tableInfo.color.withOpacity(0.05),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: tableInfo.color.withOpacity(0.3),
+                  width: 1,
+                ),
+              ),
+              child: Text(
+                tableInfo.statusText,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: tableInfo.color,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTableListItem(BuildContext context, String tableNumber, Map<String, dynamic> tableData) {
+    final status = tableData['status']?.toString() ?? 'available';
+    final seats = tableData['seats']?.toString() ?? '0';
+    final currentOrderId = tableData['currentOrderId']?.toString();
+    final tableInfo = _getTableStatusInfo(status);
+
+    return GestureDetector(
+      onTap: () => _navigateToOrderScreen(context, tableNumber, tableData, currentOrderId, status),
+      child: Container(
+        padding: EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: tableInfo.color.withOpacity(0.2),
+            width: 1.5,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 8,
+              offset: Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [tableInfo.color, tableInfo.color.withOpacity(0.7)],
+                ),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(tableInfo.icon, color: Colors.white, size: 24),
+            ),
+            SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Table $tableNumber',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                      color: Colors.grey[800],
+                    ),
+                  ),
+                  Text(
+                    '$seats Seats',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: tableInfo.color.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: tableInfo.color.withOpacity(0.3),
+                  width: 1,
+                ),
+              ),
+              child: Text(
+                tableInfo.statusText,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: tableInfo.color,
+                ),
+              ),
+            ),
+            SizedBox(width: 8),
+            Icon(
+              Icons.arrow_forward_ios_rounded,
+              color: Colors.grey[400],
+              size: 16,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _navigateToOrderScreen(BuildContext context, String tableNumber,
+      Map<String, dynamic> tableData, String? currentOrderId, String status) {
+    HapticFeedback.lightImpact();
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => OrderScreen(
+          tableNumber: tableNumber,
+          tableData: Map<String, dynamic>.from(tableData),
+          existingOrderId: currentOrderId,
+          isAddingToExisting: status == 'ordered',
+        ),
+      ),
+    );
+  }
+
+  List<MapEntry<String, dynamic>> _getFilteredTablesList(Map<String, dynamic> tables) {
+    if (_selectedFilter == 'all') {
+      return tables.entries.toList();
+    }
+
+    return tables.entries.where((entry) {
+      final tableData = entry.value as Map<String, dynamic>;
+      final status = tableData['status']?.toString() ?? 'available';
+      return status == _selectedFilter;
+    }).toList();
+  }
+
+  TableStatusInfo _getTableStatusInfo(String status) {
+    switch (status) {
+      case 'occupied':
+        return TableStatusInfo(
+          color: Colors.orange[600]!,
+          icon: Icons.group_rounded,
+          statusText: 'Occupied',
+        );
+      case 'needs_attention':
+        return TableStatusInfo(
+          color: Colors.red[600]!,
+          icon: Icons.notification_important_rounded,
+          statusText: 'Need Help',
+        );
+      case 'ordered':
+        return TableStatusInfo(
+          color: Colors.blue[600]!,
+          icon: Icons.restaurant_menu_rounded,
+          statusText: 'Ordered',
+        );
+      default:
+        return TableStatusInfo(
+          color: Colors.green[600]!,
+          icon: Icons.check_circle_rounded,
+          statusText: 'Available',
+        );
+    }
+  }
+
+  int _getStatusCount(Map<String, dynamic> tables, String targetStatus) {
+    return tables.values.where((value) {
+      final tableData = value as Map<String, dynamic>;
+      final status = tableData['status']?.toString() ?? 'available';
+      return status == targetStatus;
+    }).length;
+  }
+
+  Future<void> _handleRefresh() async {
+    _refreshController.forward();
+    await Future.delayed(Duration(milliseconds: 1000));
+    _refreshController.reset();
+    HapticFeedback.mediumImpact();
+  }
+
+  void _showLogoutDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.logout_rounded, color: Colors.red[600]),
+            SizedBox(width: 12),
+            Text('Sign Out', style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text(
+          'Are you sure you want to sign out? You will need to log in again to access the app.',
+          style: TextStyle(color: Colors.grey[700]),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel', style: TextStyle(color: Colors.grey[600])),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              FirebaseAuth.instance.signOut();
+              HapticFeedback.mediumImpact();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red[600],
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: Text('Sign Out'),
+          ),
+        ],
+      ),
+    );
+  }
 }
+
+class TableStatusInfo {
+  final Color color;
+  final IconData icon;
+  final String statusText;
+
+  TableStatusInfo({
+    required this.color,
+    required this.icon,
+    required this.statusText,
+  });
+}
+
+
+// Placeholder for OrderScreen - replace with your actual implementation
 
 // Order Screen - Improved Previous Design
 class OrderScreen extends StatefulWidget {
@@ -414,11 +1700,14 @@ class _OrderScreenState extends State<OrderScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final Color primaryColor = Color(0xFF1976D2);
   final Color secondaryColor = Color(0xFFE3F2FD);
+  final TextEditingController _searchController = TextEditingController();
+
   List<Map<String, dynamic>> _cartItems = [];
   double _totalAmount = 0.0;
   List<Map<String, dynamic>> _existingOrderItems = [];
   bool _isCheckingOut = false;
   String _tableStatus = 'available';
+  String _searchQuery = '';
 
   @override
   void initState() {
@@ -428,6 +1717,19 @@ class _OrderScreenState extends State<OrderScreen> {
     if (widget.isAddingToExisting && widget.existingOrderId != null) {
       _loadExistingOrder();
     }
+
+    // Add listener for search functionality
+    _searchController.addListener(() {
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadExistingOrder() async {
@@ -487,8 +1789,11 @@ class _OrderScreenState extends State<OrderScreen> {
                   if (_cartItems.isEmpty && !widget.isAddingToExisting)
                     _buildEmptyCart(),
 
+                  // Search Bar Section
+                  _buildSearchBar(),
+
                   Padding(
-                    padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
                     child: Text(
                       'Menu Items',
                       style: TextStyle(
@@ -508,6 +1813,50 @@ class _OrderScreenState extends State<OrderScreen> {
         ),
       ),
       bottomNavigationBar: _buildBottomNavigationBar(),
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Container(
+      margin: EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 4,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: TextField(
+        controller: _searchController,
+        decoration: InputDecoration(
+          hintText: 'Search dishes...',
+          hintStyle: TextStyle(color: Colors.grey[500]),
+          prefixIcon: Icon(Icons.search, color: primaryColor),
+          suffixIcon: _searchQuery.isNotEmpty
+              ? IconButton(
+            icon: Icon(Icons.clear, color: Colors.grey),
+            onPressed: () {
+              _searchController.clear();
+              setState(() {
+                _searchQuery = '';
+              });
+            },
+          )
+              : null,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide.none,
+          ),
+          filled: true,
+          fillColor: Colors.white,
+          contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        ),
+        style: TextStyle(fontSize: 16),
+      ),
     );
   }
 
@@ -714,28 +2063,29 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   Widget _buildEmptyCart() {
-    return Expanded(
+    return Container(
+      height: 120,
       child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
               Icons.shopping_cart_outlined,
-              size: 64,
+              size: 48,
               color: Colors.grey[300],
-            ),
-            SizedBox(height: 16),
-            Text(
-              'Your cart is empty',
-              style: TextStyle(
-                fontSize: 18,
-                color: Colors.grey[600],
-              ),
             ),
             SizedBox(height: 8),
             Text(
+              'Your cart is empty',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey[600],
+              ),
+            ),
+            Text(
               'Add items from the menu below',
               style: TextStyle(
+                fontSize: 12,
                 color: Colors.grey[500],
               ),
             ),
@@ -759,11 +2109,52 @@ class _OrderScreenState extends State<OrderScreen> {
 
         final menuItems = snapshot.data!.docs;
 
+        // Filter menu items based on search query
+        final filteredItems = menuItems.where((item) {
+          if (_searchQuery.isEmpty) return true;
+
+          final itemData = item.data() as Map<String, dynamic>;
+          final name = itemData['name']?.toString().toLowerCase() ?? '';
+          final description = itemData['description']?.toString().toLowerCase() ?? '';
+
+          return name.contains(_searchQuery) || description.contains(_searchQuery);
+        }).toList();
+
+        if (filteredItems.isEmpty && _searchQuery.isNotEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.search_off,
+                  size: 64,
+                  color: Colors.grey[300],
+                ),
+                SizedBox(height: 16),
+                Text(
+                  'No dishes found',
+                  style: TextStyle(
+                    fontSize: 18,
+                    color: Colors.grey[600],
+                  ),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'Try searching with different keywords',
+                  style: TextStyle(
+                    color: Colors.grey[500],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
         return ListView.builder(
           padding: EdgeInsets.all(16),
-          itemCount: menuItems.length,
+          itemCount: filteredItems.length,
           itemBuilder: (context, index) {
-            final item = menuItems[index];
+            final item = filteredItems[index];
             final itemData = item.data() as Map<String, dynamic>;
             final name = itemData['name']?.toString() ?? 'Unknown Item';
             final description = itemData['description']?.toString() ?? '';
@@ -1015,6 +2406,8 @@ class _OrderScreenState extends State<OrderScreen> {
       ),
     );
   }
+
+  // [Rest of the methods remain the same - _addToCart, _updateQuantity, etc.]
 
   void _addToCart(QueryDocumentSnapshot item) {
     setState(() {
@@ -1327,191 +2720,1629 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 }
-// Active Orders Screen
-class ActiveOrdersScreen extends StatelessWidget {
+
+
+
+
+
+class ActiveOrdersScreen extends StatefulWidget {
+  @override
+  _ActiveOrdersScreenState createState() => _ActiveOrdersScreenState();
+}
+
+class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
+    with SingleTickerProviderStateMixin {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final Color primaryColor = Color(0xFF1976D2);
+  final Color secondaryColor = Color(0xFFE3F2FD);
+
+  late TabController _tabController;
+  String _selectedOrderType = 'all';
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 3, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 4,
+        title: Text(
+          "Active Orders",
+          style: TextStyle(
+            color: Colors.black87,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        centerTitle: true,
+        bottom: TabBar(
+          controller: _tabController,
+          onTap: (index) {
+            setState(() {
+              switch (index) {
+                case 0:
+                  _selectedOrderType = 'all';
+                  break;
+                case 1:
+                  _selectedOrderType = 'dine_in';
+                  break;
+                case 2:
+                  _selectedOrderType = 'takeaway';
+                  break;
+              }
+            });
+          },
+          labelColor: primaryColor,
+          unselectedLabelColor: Colors.grey[600],
+          indicatorColor: primaryColor,
+          indicatorWeight: 3,
+          tabs: [
+            Tab(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.restaurant, size: 18),
+                  SizedBox(width: 8),
+                  Text('All Orders', style: TextStyle(fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+            Tab(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.table_restaurant, size: 18),
+                  SizedBox(width: 8),
+                  Text('Dine In', style: TextStyle(fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+            Tab(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.shopping_bag, size: 18),
+                  SizedBox(width: 8),
+                  Text('Takeaway', style: TextStyle(fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildOrdersList('all'),
+          _buildOrdersList('dine_in'),
+          _buildOrdersList('takeaway'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOrdersList(String orderType) {
     return StreamBuilder<QuerySnapshot>(
-      stream: _firestore
-          .collection('Orders')
-          .where('order_type', isEqualTo: 'dine_in')
-          .where('branchId', isEqualTo: 'Old_Airport')
-          .where('status', whereIn: ['pending', 'preparing', 'prepared'])
-          .orderBy('timestamp', descending: true)
-          .snapshots(),
+      stream: _getOrdersStream(orderType),
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          print('Firestore error: ${snapshot.error}');
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.error_outline, size: 64, color: Colors.red[300]),
+                SizedBox(height: 16),
+                Text(
+                  'Error loading orders',
+                  style: TextStyle(fontSize: 18, color: Colors.red[600]),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'Please check your connection',
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+                SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: () => setState(() {}),
+                  child: Text('Retry'),
+                ),
+              ],
+            ),
+          );
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CircularProgressIndicator(color: primaryColor),
+                SizedBox(height: 16),
+                Text(
+                  'Loading orders...',
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          );
+        }
+
         if (!snapshot.hasData) {
-          return Center(child: CircularProgressIndicator());
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CircularProgressIndicator(color: primaryColor),
+                SizedBox(height: 16),
+                Text(
+                  'Loading orders...',
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          );
         }
 
         final orders = snapshot.data!.docs;
 
-        return ListView.builder(
-          itemCount: orders.length,
-          itemBuilder: (context, index) {
-            final order = orders[index];
-            final tableNumber = order['tableNumber'] ?? 'Unknown';
-            final status = order['status'];
+        if (orders.isEmpty) {
+          return _buildEmptyState(orderType);
+        }
 
-            Color statusColor;
-            switch (status) {
-              case 'prepared':
-                statusColor = Colors.green;
-                break;
-              case 'preparing':
-                statusColor = Colors.orange;
-                break;
-              default:
-                statusColor = Colors.red;
-            }
+        final pendingOrders = orders.where((order) => order['status'] == 'pending').toList();
+        final preparingOrders = orders.where((order) => order['status'] == 'preparing').toList();
+        final preparedOrders = orders.where((order) => order['status'] == 'prepared').toList();
 
-            return Card(
-              margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              child: ListTile(
-                leading: Icon(Icons.receipt, color: statusColor),
-                title: Text('Order #${order['dailyOrderNumber']}'),
-                subtitle: Text(
-                  'Table: $tableNumber\n'
-                      'Total: \$${order['totalAmount'].toStringAsFixed(2)}',
-                ),
-                trailing: Chip(
-                  label: Text(
-                    status.toUpperCase(),
-                    style: TextStyle(color: Colors.white, fontSize: 12),
-                  ),
-                  backgroundColor: statusColor,
-                ),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => OrderDetailScreen(order: order),
-                    ),
-                  );
-                },
-              ),
-            );
+        return RefreshIndicator(
+          onRefresh: () async {
+            setState(() {});
+            await Future.delayed(Duration(milliseconds: 500));
           },
+          child: ListView(
+            padding: EdgeInsets.all(16),
+            children: [
+              _buildSummaryCards(pendingOrders.length, preparingOrders.length, preparedOrders.length),
+              SizedBox(height: 20),
+
+              if (preparedOrders.isNotEmpty) ...[
+                _buildSectionHeader('Ready to Serve', preparedOrders.length, Colors.green),
+                ...preparedOrders.map((order) => _buildOrderCard(order, true)),
+                SizedBox(height: 16),
+              ],
+
+              if (preparingOrders.isNotEmpty) ...[
+                _buildSectionHeader('Preparing', preparingOrders.length, Colors.orange),
+                ...preparingOrders.map((order) => _buildOrderCard(order, false)),
+                SizedBox(height: 16),
+              ],
+
+              if (pendingOrders.isNotEmpty) ...[
+                _buildSectionHeader('New Orders', pendingOrders.length, Colors.red),
+                ...pendingOrders.map((order) => _buildOrderCard(order, false)),
+              ],
+            ],
+          ),
         );
       },
     );
   }
-}
 
-// Order Detail Screen
-class OrderDetailScreen extends StatelessWidget {
-  final QueryDocumentSnapshot order;
+  Stream<QuerySnapshot> _getOrdersStream(String orderType) {
+    try {
+      Query query = _firestore
+          .collection('Orders')
+          .where('branchId', isEqualTo: 'Old_Airport')
+          .where('status', whereIn: ['pending', 'preparing', 'prepared']);
 
-  OrderDetailScreen({required this.order});
+      if (orderType != 'all') {
+        query = query.where('order_type', isEqualTo: orderType);
+      }
 
-  @override
-  Widget build(BuildContext context) {
+      return query.orderBy('timestamp', descending: true).snapshots();
+    } catch (e) {
+      print('Error creating stream: $e');
+      return Stream.empty();
+    }
+  }
+
+  Widget _buildSummaryCards(int pending, int preparing, int prepared) {
+    return Row(
+      children: [
+        Expanded(
+          child: _buildSummaryCard(
+              'New',
+              pending,
+              Colors.red,
+              Icons.fiber_new
+          ),
+        ),
+        SizedBox(width: 12),
+        Expanded(
+          child: _buildSummaryCard(
+              'Preparing',
+              preparing,
+              Colors.orange,
+              Icons.restaurant
+          ),
+        ),
+        SizedBox(width: 12),
+        Expanded(
+          child: _buildSummaryCard(
+              'Ready',
+              prepared,
+              Colors.green,
+              Icons.check_circle
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSummaryCard(String title, int count, Color color, IconData icon) {
+    return Container(
+      padding: EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 4,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 24),
+          SizedBox(height: 8),
+          Text(
+            count.toString(),
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[600],
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title, int count, Color color) {
+    return Container(
+      margin: EdgeInsets.only(bottom: 12),
+      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 4,
+            height: 20,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          SizedBox(width: 12),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          Spacer(),
+          Container(
+            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              count.toString(),
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOrderCard(QueryDocumentSnapshot order, bool isPriority) {
     final orderData = order.data() as Map<String, dynamic>;
-    final items = List<Map<String, dynamic>>.from(orderData['items'] ?? []);
+    final orderType = orderData['order_type']?.toString() ?? 'dine_in';
+    final tableNumber = orderData['tableNumber']?.toString();
+    final customerName = orderData['customerName']?.toString();
     final status = orderData['status']?.toString() ?? 'unknown';
-    final tableNumber = orderData['tableNumber']?.toString() ?? 'Unknown';
     final dailyOrderNumber = orderData['dailyOrderNumber']?.toString() ?? '';
     final totalAmount = (orderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
+    final timestamp = orderData['timestamp'] as Timestamp?;
+    final items = List<Map<String, dynamic>>.from(orderData['items'] ?? []);
 
-    return Scaffold(
-      appBar: AppBar(title: Text('Order Details')),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView(
-              padding: EdgeInsets.all(16),
+    final statusColor = _getStatusColor(status);
+
+    return Container(
+      margin: EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: isPriority ? Colors.green.withOpacity(0.2) : Colors.black12,
+            blurRadius: isPriority ? 8 : 4,
+            offset: Offset(0, isPriority ? 4 : 2),
+          ),
+        ],
+        border: isPriority
+            ? Border.all(color: Colors.green, width: 2)
+            : null,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () {
+            // Replace with your actual OrderDetailScreen navigation
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => OrderDetailScreen(order: order),
+              ),
+            );
+          },
+          child: Padding(
+            padding: EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Order #$dailyOrderNumber',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                SizedBox(height: 8),
-                Text('Table: $tableNumber',
-                    style: TextStyle(fontSize: 16)),
-                SizedBox(height: 16),
-                Text('Status: ${status.toUpperCase()}',
-                    style: TextStyle(
-                        color: _getStatusColor(status),
-                        fontWeight: FontWeight.bold)),
-                SizedBox(height: 16),
-                Text('Items:', style: TextStyle(fontWeight: FontWeight.bold)),
-                ...items.map((item) => ListTile(
-                  title: Text(item['name']?.toString() ?? 'Unknown Item'),
-                  subtitle: Text(
-                      'Quantity: ${item['quantity']} × \$${(item['price'] as num?)?.toStringAsFixed(2) ?? '0.00'}'),
-                  trailing: Text(
-                      '\$${((item['price'] as num?)?.toDouble() ?? 0.0 * (item['quantity'] as num?)!.toInt() ?? 1).toStringAsFixed(2)}'),
-                )),
-                Divider(),
-                ListTile(
-                  title: Text('TOTAL',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                  trailing: Text('\$${totalAmount.toStringAsFixed(2)}',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                Row(
+                  children: [
+                    Container(
+                      padding: EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: orderType == 'takeaway'
+                            ? Colors.orange[100]
+                            : Colors.blue[100],
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        orderType == 'takeaway'
+                            ? Icons.shopping_bag
+                            : Icons.table_restaurant,
+                        color: orderType == 'takeaway'
+                            ? Colors.orange[800]
+                            : Colors.blue[800],
+                        size: 20,
+                      ),
+                    ),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                'Order #$dailyOrderNumber',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: primaryColor,
+                                ),
+                              ),
+                              if (isPriority) ...[
+                                SizedBox(width: 8),
+                                Container(
+                                  padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.green,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    'READY',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            orderType == 'takeaway'
+                                ? (customerName != null ? 'Customer: $customerName' : 'Takeaway Order')
+                                : 'Table: ${tableNumber ?? 'N/A'}',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: statusColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: statusColor, width: 1),
+                      ),
+                      child: Text(
+                        status.toUpperCase(),
+                        style: TextStyle(
+                          color: statusColor,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 12),
+                Container(
+                  padding: EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.restaurant_menu, size: 16, color: Colors.grey[600]),
+                          SizedBox(width: 4),
+                          Text(
+                            '${items.length} item${items.length != 1 ? 's' : ''}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        items.take(2).map((item) =>
+                        '${item['name']} (${item['quantity']})'
+                        ).join(', ') + (items.length > 2 ? '...' : ''),
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.black87,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
+                        SizedBox(width: 4),
+                        Text(
+                          timestamp != null ? _formatTime(timestamp.toDate()) : 'Unknown',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      '\$${totalAmount.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: primaryColor,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
-          if (status == 'prepared')
-            Padding(
-              padding: EdgeInsets.all(16),
-              child: ElevatedButton(
-                onPressed: () => _markAsServed(context),
-                child: Text('Mark as Served'),
-                style: ElevatedButton.styleFrom(
-                    minimumSize: Size(double.infinity, 50)),
-              ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(String orderType) {
+    String message;
+    IconData icon;
+
+    switch (orderType) {
+      case 'dine_in':
+        message = 'No active dine-in orders';
+        icon = Icons.table_restaurant;
+        break;
+      case 'takeaway':
+        message = 'No active takeaway orders';
+        icon = Icons.shopping_bag;
+        break;
+      default:
+        message = 'No active orders';
+        icon = Icons.restaurant;
+    }
+
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            icon,
+            size: 64,
+            color: Colors.grey[300],
+          ),
+          SizedBox(height: 16),
+          Text(
+            message,
+            style: TextStyle(
+              fontSize: 18,
+              color: Colors.grey[600],
             ),
+          ),
+          SizedBox(height: 8),
+          Text(
+            'Orders will appear here when they are placed',
+            style: TextStyle(
+              color: Colors.grey[500],
+            ),
+          ),
         ],
       ),
     );
   }
 
   Color _getStatusColor(String status) {
-    switch (status) {
+    switch (status.toLowerCase()) {
       case 'prepared':
         return Colors.green;
       case 'preparing':
         return Colors.orange;
-      default:
+      case 'pending':
         return Colors.red;
+      default:
+        return Colors.grey;
     }
   }
 
-  Future<void> _markAsServed(BuildContext context) async {
+  String _formatTime(DateTime dateTime) {
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    if (difference.inMinutes < 60) {
+      return '${difference.inMinutes}m ago';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours}h ago';
+    } else {
+      return '${dateTime.day}/${dateTime.month}';
+    }
+  }
+}
+
+// Placeholder OrderDetailScreen, replace with your actual detail screen widget
+
+
+// Placeholder for OrderDetailScreen - replace with your actual implementation
+
+
+
+// Order Detail Screen
+
+
+class OrderDetailScreen extends StatefulWidget {
+  final QueryDocumentSnapshot order;
+
+  OrderDetailScreen({required this.order});
+
+  @override
+  _OrderDetailScreenState createState() => _OrderDetailScreenState();
+}
+
+class _OrderDetailScreenState extends State<OrderDetailScreen> {
+  final Color primaryColor = Color(0xFF1976D2);
+  final Color secondaryColor = Color(0xFFE3F2FD);
+  bool _isUpdating = false;
+  String _selectedTab = 'all'; // all, dine_in, takeaway
+
+  @override
+  Widget build(BuildContext context) {
+    final orderData = widget.order.data() as Map<String, dynamic>;
+    final items = List<Map<String, dynamic>>.from(orderData['items'] ?? []);
+    final status = orderData['status']?.toString() ?? 'unknown';
+    final orderType = orderData['order_type']?.toString() ?? 'dine_in';
+    final tableNumber = orderData['tableNumber']?.toString();
+    final dailyOrderNumber = orderData['dailyOrderNumber']?.toString() ?? '';
+    final totalAmount = (orderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
+    final subtotal = (orderData['subtotal'] as num?)?.toDouble() ?? 0.0;
+    final timestamp = orderData['timestamp'] as Timestamp?;
+    final customerName = orderData['customerName']?.toString();
+    final customerPhone = orderData['customerPhone']?.toString();
+    final paymentMethod = orderData['paymentMethod']?.toString();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          'Order Details',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        backgroundColor: primaryColor,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        actions: [
+          IconButton(
+            icon: Icon(Icons.refresh),
+            onPressed: () => setState(() {}),
+          ),
+        ],
+      ),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [primaryColor, Colors.white],
+            stops: [0.0, 0.3],
+          ),
+        ),
+        child: Column(
+          children: [
+            // Order Header Card
+            Container(
+              margin: EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black12,
+                    blurRadius: 8,
+                    offset: Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Padding(
+                padding: EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Order Number and Type
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Order #$dailyOrderNumber',
+                              style: TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.bold,
+                                color: primaryColor,
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Container(
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: orderType == 'takeaway'
+                                    ? Colors.orange[100]
+                                    : Colors.blue[100],
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(
+                                orderType.toUpperCase().replaceAll('_', ' '),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: orderType == 'takeaway'
+                                      ? Colors.orange[800]
+                                      : Colors.blue[800],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        // Status Badge
+                        Container(
+                          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: _getStatusColor(status).withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: _getStatusColor(status),
+                              width: 2,
+                            ),
+                          ),
+                          child: Text(
+                            status.toUpperCase(),
+                            style: TextStyle(
+                              color: _getStatusColor(status),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    SizedBox(height: 16),
+                    Divider(color: Colors.grey[300]),
+                    SizedBox(height: 16),
+
+                    // Order Info Grid
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildInfoItem(
+                            icon: orderType == 'takeaway'
+                                ? Icons.shopping_bag
+                                : Icons.table_restaurant,
+                            label: orderType == 'takeaway' ? 'Pickup' : 'Table',
+                            value: orderType == 'takeaway'
+                                ? 'Counter'
+                                : (tableNumber ?? 'N/A'),
+                          ),
+                        ),
+                        Expanded(
+                          child: _buildInfoItem(
+                            icon: Icons.access_time,
+                            label: 'Ordered',
+                            value: timestamp != null
+                                ? _formatTime(timestamp.toDate())
+                                : 'Unknown',
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    // Customer Info (for takeaway)
+                    if (orderType == 'takeaway' && (customerName != null || customerPhone != null)) ...[
+                      SizedBox(height: 12),
+                      Row(
+                        children: [
+                          if (customerName != null)
+                            Expanded(
+                              child: _buildInfoItem(
+                                icon: Icons.person,
+                                label: 'Customer',
+                                value: customerName,
+                              ),
+                            ),
+                          if (customerPhone != null)
+                            Expanded(
+                              child: _buildInfoItem(
+                                icon: Icons.phone,
+                                label: 'Phone',
+                                value: customerPhone,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+
+                    // Payment Method
+                    if (paymentMethod != null) ...[
+                      SizedBox(height: 12),
+                      _buildInfoItem(
+                        icon: paymentMethod == 'cash' ? Icons.money : Icons.credit_card,
+                        label: 'Payment',
+                        value: paymentMethod.toUpperCase(),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+
+            // Items Section
+            Expanded(
+              child: Container(
+                margin: EdgeInsets.symmetric(horizontal: 16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black12,
+                      blurRadius: 8,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    // Items Header
+                    Container(
+                      padding: EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: primaryColor.withOpacity(0.05),
+                        borderRadius: BorderRadius.only(
+                          topLeft: Radius.circular(16),
+                          topRight: Radius.circular(16),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.restaurant_menu, color: primaryColor),
+                          SizedBox(width: 8),
+                          Text(
+                            'Order Items (${items.length})',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: primaryColor,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Items List
+                    Expanded(
+                      child: ListView.builder(
+                        padding: EdgeInsets.all(16),
+                        itemCount: items.length,
+                        itemBuilder: (context, index) {
+                          final item = items[index];
+                          final name = item['name']?.toString() ?? 'Unknown Item';
+                          final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
+                          final price = (item['price'] as num?)?.toDouble() ?? 0.0;
+                          final total = price * quantity;
+
+                          return Container(
+                            margin: EdgeInsets.only(bottom: 12),
+                            padding: EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[50],
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.grey[200]!),
+                            ),
+                            child: Row(
+                              children: [
+                                // Quantity Badge
+                                Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: primaryColor.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      '$quantity',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: primaryColor,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(width: 16),
+
+                                // Item Details
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        name,
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                                      SizedBox(height: 4),
+                                      Text(
+                                        '\$${price.toStringAsFixed(2)} each',
+                                        style: TextStyle(
+                                          color: Colors.grey[600],
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+
+                                // Total Price
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      '\$${total.toStringAsFixed(2)}',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                        color: primaryColor,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+
+                    // Total Section
+                    Container(
+                      padding: EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: primaryColor.withOpacity(0.05),
+                        borderRadius: BorderRadius.only(
+                          bottomLeft: Radius.circular(16),
+                          bottomRight: Radius.circular(16),
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          if (subtotal != totalAmount)
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'Subtotal:',
+                                  style: TextStyle(fontSize: 16),
+                                ),
+                                Text(
+                                  '\$${subtotal.toStringAsFixed(2)}',
+                                  style: TextStyle(fontSize: 16),
+                                ),
+                              ],
+                            ),
+                          if (subtotal != totalAmount) SizedBox(height: 8),
+
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'TOTAL:',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: primaryColor,
+                                ),
+                              ),
+                              Text(
+                                '\$${totalAmount.toStringAsFixed(2)}',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: primaryColor,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            SizedBox(height: 16),
+          ],
+        ),
+      ),
+
+      // Action Buttons
+      bottomNavigationBar: _buildActionButtons(status, orderType),
+    );
+  }
+
+  Widget _buildInfoItem({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 16, color: Colors.grey[600]),
+            SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[600],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: Colors.black87,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget? _buildActionButtons(String status, String orderType) {
+    return Container(
+      padding: EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 8,
+            offset: Offset(0, -2),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Status-specific action buttons
+          if (status == 'pending') ...[
+            // Mark as Preparing button
+            ElevatedButton(
+              onPressed: _isUpdating ? null : _markAsPreparing,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+                minimumSize: Size(double.infinity, 50),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: _isUpdating
+                  ? CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                  : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.restaurant),
+                  SizedBox(width: 8),
+                  Text(
+                    'Mark as Preparing',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(height: 12),
+            // Return/Cancel button for pending orders
+            ElevatedButton(
+              onPressed: _isUpdating ? null : _returnOrder,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+                minimumSize: Size(double.infinity, 50),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: _isUpdating
+                  ? CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                  : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.cancel_outlined),
+                  SizedBox(width: 8),
+                  Text(
+                    'Cancel Order',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          if (status == 'preparing') ...[
+            // Mark as Prepared button
+            ElevatedButton(
+              onPressed: _isUpdating ? null : _markAsPrepared,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+                minimumSize: Size(double.infinity, 50),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: _isUpdating
+                  ? CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                  : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.check_circle_outline),
+                  SizedBox(width: 8),
+                  Text(
+                    'Mark as Prepared',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(height: 12),
+            // Return to Pending button
+            ElevatedButton(
+              onPressed: _isUpdating ? null : _returnToPending,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.amber[700],
+                foregroundColor: Colors.white,
+                minimumSize: Size(double.infinity, 50),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: _isUpdating
+                  ? CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                  : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.undo),
+                  SizedBox(width: 8),
+                  Text(
+                    'Return to Pending',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          if (status == 'prepared') ...[
+            // Mark as Served/Picked Up button
+            ElevatedButton(
+              onPressed: _isUpdating ? null : () => _markAsServed(orderType),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+                minimumSize: Size(double.infinity, 50),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: _isUpdating
+                  ? CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                  : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.delivery_dining),
+                  SizedBox(width: 8),
+                  Text(
+                    orderType == 'takeaway' ? 'Mark as Picked Up' : 'Mark as Served',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(height: 12),
+            // Return to Preparing button
+            ElevatedButton(
+              onPressed: _isUpdating ? null : _returnToPreparing,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+                minimumSize: Size(double.infinity, 50),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: _isUpdating
+                  ? CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                  : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.undo),
+                  SizedBox(width: 8),
+                  Text(
+                    'Return to Preparing',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // Show status info for completed orders
+          if (['delivered', 'picked_up', 'cancelled'].contains(status)) ...[
+            Container(
+              padding: EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: _getStatusColor(status).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _getStatusColor(status).withOpacity(0.3)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(_getStatusIcon(status), color: _getStatusColor(status)),
+                  SizedBox(width: 8),
+                  Text(
+                    _getStatusMessage(status, orderType),
+                    style: TextStyle(
+                      color: _getStatusColor(status),
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'delivered':
+      case 'picked_up':
+        return Colors.blue;
+      case 'prepared':
+        return Colors.green;
+      case 'preparing':
+        return Colors.orange;
+      case 'paid':
+        return Colors.teal;
+      case 'pending':
+        return Colors.amber[700]!;
+      case 'cancelled':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  IconData _getStatusIcon(String status) {
+    switch (status.toLowerCase()) {
+      case 'delivered':
+        return Icons.check_circle;
+      case 'picked_up':
+        return Icons.shopping_bag_outlined;
+      case 'cancelled':
+        return Icons.cancel;
+      default:
+        return Icons.info;
+    }
+  }
+
+  String _getStatusMessage(String status, String orderType) {
+    switch (status.toLowerCase()) {
+      case 'delivered':
+        return 'Order has been served';
+      case 'picked_up':
+        return 'Order has been picked up';
+      case 'cancelled':
+        return 'Order was cancelled';
+      default:
+        return 'Order completed';
+    }
+  }
+
+  String _formatTime(DateTime dateTime) {
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    if (difference.inMinutes < 60) {
+      return '${difference.inMinutes}m ago';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours}h ago';
+    } else {
+      return '${dateTime.day}/${dateTime.month}';
+    }
+  }
+
+  Future<void> _markAsPreparing() async {
+    setState(() => _isUpdating = true);
+
     try {
       await FirebaseFirestore.instance
           .collection('Orders')
-          .doc(order.id)
-          .update({'status': 'delivered'});
-
-      // Update table status in Branch document
-      final orderData = order.data() as Map<String, dynamic>;
-      final tableNumber = orderData['tableNumber']?.toString();
-
-      if (tableNumber != null) {
-        final tableUpdate = <String, dynamic>{};
-        tableUpdate['Tables.$tableNumber.status'] = 'occupied';
-        tableUpdate['Tables.$tableNumber.currentOrderId'] = '';
-
-        await FirebaseFirestore.instance
-            .collection('Branch')
-            .doc('Old_Airport')
-            .update(tableUpdate);
-      }
+          .doc(widget.order.id)
+          .update({'status': 'preparing'});
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Order marked as served!')),
+        SnackBar(
+          content: Text('Order marked as preparing!'),
+          backgroundColor: Colors.orange,
+          behavior: SnackBarBehavior.floating,
+        ),
       );
 
       Navigator.pop(context);
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error updating order: $e')),
+        SnackBar(
+          content: Text('Error updating order: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
       );
+    } finally {
+      setState(() => _isUpdating = false);
+    }
+  }
+
+  Future<void> _markAsPrepared() async {
+    setState(() => _isUpdating = true);
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('Orders')
+          .doc(widget.order.id)
+          .update({'status': 'prepared'});
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Order marked as prepared!'),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+
+      Navigator.pop(context);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error updating order: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      setState(() => _isUpdating = false);
+    }
+  }
+
+  Future<void> _markAsServed(String orderType) async {
+    setState(() => _isUpdating = true);
+
+    try {
+      final newStatus = orderType == 'takeaway' ? 'picked_up' : 'delivered';
+
+      await FirebaseFirestore.instance
+          .collection('Orders')
+          .doc(widget.order.id)
+          .update({'status': newStatus});
+
+      // Update table status only for dine-in orders
+      if (orderType == 'dine_in') {
+        final orderData = widget.order.data() as Map<String, dynamic>;
+        final tableNumber = orderData['tableNumber']?.toString();
+
+        if (tableNumber != null) {
+          final tableUpdate = <String, dynamic>{};
+          tableUpdate['Tables.$tableNumber.status'] = 'occupied';
+          tableUpdate['Tables.$tableNumber.currentOrderId'] = '';
+
+          await FirebaseFirestore.instance
+              .collection('Branch')
+              .doc('Old_Airport')
+              .update(tableUpdate);
+        }
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(orderType == 'takeaway'
+              ? 'Order marked as picked up!'
+              : 'Order marked as served!'),
+          backgroundColor: Colors.blue,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+
+      Navigator.pop(context);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error updating order: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      setState(() => _isUpdating = false);
+    }
+  }
+
+  Future<void> _returnOrder() async {
+    // Show confirmation dialog first
+    bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Cancel Order'),
+          content: Text('Are you sure you want to cancel this order? This action cannot be undone.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text('No'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: Text('Yes, Cancel'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm != true) return;
+
+    setState(() => _isUpdating = true);
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('Orders')
+          .doc(widget.order.id)
+          .update({'status': 'cancelled'});
+
+      // Clear table if it's a dine-in order
+      final orderData = widget.order.data() as Map<String, dynamic>;
+      final orderType = orderData['order_type']?.toString() ?? 'dine_in';
+
+      if (orderType == 'dine_in') {
+        final tableNumber = orderData['tableNumber']?.toString();
+        if (tableNumber != null) {
+          final tableUpdate = <String, dynamic>{};
+          tableUpdate['Tables.$tableNumber.status'] = 'available';
+          tableUpdate['Tables.$tableNumber.currentOrderId'] = FieldValue.delete();
+
+          await FirebaseFirestore.instance
+              .collection('Branch')
+              .doc('Old_Airport')
+              .update(tableUpdate);
+        }
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Order cancelled successfully!'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+
+      Navigator.pop(context);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error cancelling order: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      setState(() => _isUpdating = false);
+    }
+  }
+
+  Future<void> _returnToPending() async {
+    setState(() => _isUpdating = true);
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('Orders')
+          .doc(widget.order.id)
+          .update({'status': 'pending'});
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Order returned to pending!'),
+          backgroundColor: Colors.amber[700],
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+
+      Navigator.pop(context);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error updating order: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      setState(() => _isUpdating = false);
+    }
+  }
+
+  Future<void> _returnToPreparing() async {
+    setState(() => _isUpdating = true);
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('Orders')
+          .doc(widget.order.id)
+          .update({'status': 'preparing'});
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Order returned to preparing!'),
+          backgroundColor: Colors.orange,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+
+      Navigator.pop(context);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error updating order: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      setState(() => _isUpdating = false);
     }
   }
 }
+
+
 // Menu Browser Screen
 class MenuBrowserScreen extends StatelessWidget {
   @override
@@ -1687,6 +4518,9 @@ class AllMenuItemsTab extends StatelessWidget {
   }
 }
 
+
+
+
 class TakeawayOrderScreen extends StatefulWidget {
   @override
   _TakeawayOrderScreenState createState() => _TakeawayOrderScreenState();
@@ -1696,294 +4530,425 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final Color primaryColor = Color(0xFF1976D2);
   final Color secondaryColor = Color(0xFFE3F2FD);
+  final Color successColor = Color(0xFF4CAF50);
+  final Color warningColor = Color(0xFFFF9800);
+
   List<Map<String, dynamic>> _cartItems = [];
   double _totalAmount = 0.0;
   final TextEditingController _customerNameController = TextEditingController();
   final TextEditingController _customerPhoneController = TextEditingController();
+  final TextEditingController _vehicleInfoController = TextEditingController();
+  final TextEditingController _specialInstructionsController = TextEditingController();
+  final TextEditingController _waitTimeController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
+
   bool _isSubmitting = false;
+  String _orderType = 'pickup';
+  String _paymentMethod = 'cash';
+  bool _isCustomerInfoCollapsed = true;
+  String _searchQuery = '';
+  final ScrollController _scrollController = ScrollController();
+
+  // New variables for category management
+  Map<String, bool> _expandedCategories = {};
+  bool _showCartSummary = false;
+
+  void _debugFirestore() async {
+    try {
+      final QuerySnapshot result = await _firestore
+          .collection('menu_items')
+          .where('isAvailable', isEqualTo: true)
+          .where('branchId', isEqualTo: 'Old_Airport')
+          .get();
+
+      print('DEBUG: Found ${result.docs.length} documents');
+      for (var doc in result.docs) {
+        print('DEBUG: Document ID: ${doc.id}, Data: ${doc.data()}');
+      }
+    } catch (e) {
+      print('DEBUG: Error fetching data: $e');
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _debugFirestore();
+    _searchController.addListener(() {
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase();
+      });
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Takeaway Orders'),
-        backgroundColor: primaryColor,
-        foregroundColor: Colors.white,
+      backgroundColor: Colors.grey[50],
+      appBar: _buildCleanAppBar(),
+      body: Column(
+        children: [
+          // Compact header section
+          _buildCompactHeader(),
+
+          // Search bar (always visible)
+          _buildImprovedSearchBar(),
+
+          // Expandable cart summary
+          if (_cartItems.isNotEmpty) _buildExpandableCartSummary(),
+
+          // Menu section with improved scrolling
+          Expanded(child: _buildImprovedMenuGrid()),
+        ],
       ),
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.white, secondaryColor],
-          ),
-        ),
-        child: Column(
-          children: [
-            // Customer Information Section
-            Container(
-              padding: EdgeInsets.all(16),
-              color: Colors.white,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Customer Information',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: primaryColor,
-                    ),
-                  ),
-                  SizedBox(height: 12),
-                  TextField(
-                    controller: _customerNameController,
-                    decoration: InputDecoration(
-                      labelText: 'Customer Name',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.person),
-                    ),
-                  ),
-                  SizedBox(height: 12),
-                  TextField(
-                    controller: _customerPhoneController,
-                    decoration: InputDecoration(
-                      labelText: 'Phone Number',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.phone),
-                    ),
-                    keyboardType: TextInputType.phone,
-                  ),
-                ],
-              ),
-            ),
-
-            // Cart Section
-            if (_cartItems.isNotEmpty) _buildCartSection(),
-
-            // Menu Section
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (_cartItems.isEmpty)
-                    _buildEmptyCart(),
-
-                  Padding(
-                    padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-                    child: Text(
-                      'Menu Items',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: primaryColor,
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: _buildMenuList(),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-      bottomNavigationBar: _buildBottomNavigationBar(),
+      bottomNavigationBar: _buildMinimalBottomBar(),
     );
   }
 
-  Widget _buildCartSection() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black12,
-            blurRadius: 4,
-            offset: Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Padding(
-            padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Current Order',
+  PreferredSizeWidget _buildCleanAppBar() {
+    return AppBar(
+      title: Text('Takeaway Orders'),
+      backgroundColor: primaryColor,
+      foregroundColor: Colors.white,
+      elevation: 0,
+      actions: [
+        if (_cartItems.isNotEmpty)
+          Container(
+            margin: EdgeInsets.only(right: 16),
+            child: Center(
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: warningColor,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '${_cartItems.length}',
                   style: TextStyle(
-                    fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: primaryColor,
+                    color: Colors.white,
                   ),
                 ),
-                Text(
-                  '+\$$_totalAmount',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: primaryColor,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildCompactHeader() {
+    return Container(
+      color: Colors.white,
+      child: Column(
+        children: [
+          // Service type and payment in one compact row
+          Padding(
+            padding: EdgeInsets.all(16),
+            child: Row(
+              children: [
+                // Service Type Toggle
+                Expanded(
+                  flex: 2,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(25),
+                    ),
+                    child: Row(
+                      children: [
+                        _buildServiceTypeButton('pickup', Icons.store, 'Pickup'),
+                        _buildServiceTypeButton('curbside', Icons.directions_car, 'Curbside'),
+                      ],
+                    ),
+                  ),
+                ),
+
+                SizedBox(width: 16),
+
+                // Payment method dropdown (compact)
+                Expanded(
+                  child: Container(
+                    height: 45,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(25),
+                      border: Border.all(color: Colors.grey[300]!),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: _paymentMethod,
+                        isExpanded: true,
+                        items: [
+                          DropdownMenuItem(value: 'cash', child: Text('💵 Cash')),
+                          DropdownMenuItem(value: 'card', child: Text('💳 Card')),
+                          DropdownMenuItem(value: 'upi', child: Text('📱 UPI')),
+                        ],
+                        onChanged: (value) => setState(() => _paymentMethod = value!),
+                        padding: EdgeInsets.symmetric(horizontal: 16),
+                      ),
+                    ),
+                  ),
+                ),
+
+                SizedBox(width: 12),
+
+                // Customer info toggle button
+                Container(
+                  decoration: BoxDecoration(
+                    color: _isCustomerInfoCollapsed ? Colors.grey[200] : primaryColor,
+                    borderRadius: BorderRadius.circular(25),
+                  ),
+                  child: IconButton(
+                    onPressed: () => setState(() => _isCustomerInfoCollapsed = !_isCustomerInfoCollapsed),
+                    icon: Icon(
+                      Icons.person,
+                      color: _isCustomerInfoCollapsed ? Colors.grey[600] : Colors.white,
+                    ),
                   ),
                 ),
               ],
             ),
           ),
-          Container(
-            height: 140,
-            child: ListView.builder(
-              padding: EdgeInsets.symmetric(horizontal: 16),
-              scrollDirection: Axis.horizontal,
-              itemCount: _cartItems.length,
-              itemBuilder: (context, index) {
-                final item = _cartItems[index];
-                return Container(
-                  width: 170,
-                  margin: EdgeInsets.only(right: 12, bottom: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black12,
-                        blurRadius: 4,
-                        offset: Offset(0, 2),
-                      ),
-                    ],
-                    border: Border.all(
-                      color: primaryColor.withOpacity(0.2),
-                      width: 1,
-                    ),
+
+          // Collapsible customer info
+          if (!_isCustomerInfoCollapsed) _buildCompactCustomerInfo(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildServiceTypeButton(String type, IconData icon, String label) {
+    final isSelected = _orderType == type;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _orderType = type),
+        child: Container(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: isSelected ? primaryColor : Colors.transparent,
+            borderRadius: BorderRadius.circular(25),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                color: isSelected ? Colors.white : Colors.grey[600],
+                size: 18,
+              ),
+              SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: isSelected ? Colors.white : Colors.grey[600],
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCompactCustomerInfo() {
+    return Container(
+      padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _customerNameController,
+                  decoration: InputDecoration(
+                    labelText: 'Customer Name *',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                    isDense: true,
                   ),
-                  child: Padding(
-                    padding: EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        // Item name and price
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              item['name'],
-                              style: TextStyle(
-                                fontWeight: FontWeight.w500,
-                                fontSize: 13,
-                              ),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              '\$${item['price'].toStringAsFixed(2)} each',
-                              style: TextStyle(
-                                color: Colors.grey[600],
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-
-                        // Centered quantity controls: - 1 +
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            // Remove button (-)
-                            GestureDetector(
-                              onTap: () => _updateQuantity(index, -1),
-                              child: Container(
-                                width: 34,
-                                height: 34,
-                                decoration: BoxDecoration(
-                                  color: Colors.grey[200],
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(Icons.remove, size: 18, color: Colors.grey[700]),
-                              ),
-                            ),
-                            SizedBox(width: 12),
-
-                            // Quantity number
-                            Container(
-                              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                              decoration: BoxDecoration(
-                                color: primaryColor.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                '${item['quantity']}',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: primaryColor,
-                                ),
-                              ),
-                            ),
-                            SizedBox(width: 12),
-
-                            // Add button (+)
-                            GestureDetector(
-                              onTap: () => _updateQuantity(index, 1),
-                              child: Container(
-                                width: 34,
-                                height: 34,
-                                decoration: BoxDecoration(
-                                  color: primaryColor.withOpacity(0.2),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(Icons.add, size: 18, color: primaryColor),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
+                ),
+              ),
+              SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: _customerPhoneController,
+                  decoration: InputDecoration(
+                    labelText: 'Phone *',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                    isDense: true,
                   ),
-                );
-              },
+                  keyboardType: TextInputType.phone,
+                ),
+              ),
+            ],
+          ),
+
+          if (_orderType == 'curbside') ...[
+            SizedBox(height: 12),
+            TextField(
+              controller: _vehicleInfoController,
+              decoration: InputDecoration(
+                labelText: 'Vehicle Info (Color, Model)',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                isDense: true,
+              ),
             ),
+          ],
+
+          SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _waitTimeController,
+                  decoration: InputDecoration(
+                    labelText: 'Wait Time (mins)',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                    isDense: true,
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+              ),
+              SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: _specialInstructionsController,
+                  decoration: InputDecoration(
+                    labelText: 'Special Notes',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                    isDense: true,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _buildEmptyCart() {
-    return Expanded(
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.shopping_cart_outlined,
-              size: 64,
-              color: Colors.grey[300],
-            ),
-            SizedBox(height: 16),
-            Text(
-              'Your cart is empty',
-              style: TextStyle(
-                fontSize: 18,
-                color: Colors.grey[600],
-              ),
-            ),
-            SizedBox(height: 8),
-            Text(
-              'Add items from the menu below',
-              style: TextStyle(
-                color: Colors.grey[500],
-              ),
-            ),
-          ],
+  Widget _buildImprovedSearchBar() {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: Colors.white,
+      child: TextField(
+        controller: _searchController,
+        decoration: InputDecoration(
+          hintText: 'Search dishes...',
+          prefixIcon: Icon(Icons.search, color: primaryColor, size: 20),
+          suffixIcon: _searchQuery.isNotEmpty
+              ? IconButton(
+            icon: Icon(Icons.clear, size: 20),
+            onPressed: () {
+              _searchController.clear();
+              setState(() => _searchQuery = '');
+            },
+          )
+              : null,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(25),
+            borderSide: BorderSide(color: Colors.grey[300]!),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(25),
+            borderSide: BorderSide(color: primaryColor, width: 1),
+          ),
+          contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          filled: true,
+          fillColor: Colors.grey[50],
+          isDense: true,
         ),
       ),
     );
   }
 
-  Widget _buildMenuList() {
+  Widget _buildExpandableCartSummary() {
+    return Container(
+      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: primaryColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: primaryColor.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          GestureDetector(
+            onTap: () => setState(() => _showCartSummary = !_showCartSummary),
+            child: Padding(
+              padding: EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Icon(Icons.shopping_cart, color: primaryColor, size: 20),
+                  SizedBox(width: 8),
+                  Text(
+                    '${_cartItems.length} items',
+                    style: TextStyle(fontWeight: FontWeight.w500),
+                  ),
+                  Spacer(),
+                  Text(
+                    '\$${_totalAmount.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: primaryColor,
+                      fontSize: 16,
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  Icon(
+                    _showCartSummary ? Icons.expand_less : Icons.expand_more,
+                    color: primaryColor,
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          if (_showCartSummary) ...[
+            Divider(height: 1, color: primaryColor.withOpacity(0.3)),
+            Container(
+              constraints: BoxConstraints(maxHeight: 150),
+              child: ListView.builder(
+                shrinkWrap: true,
+                padding: EdgeInsets.all(8),
+                itemCount: _cartItems.length,
+                itemBuilder: (context, index) {
+                  final item = _cartItems[index];
+                  return Padding(
+                    padding: EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${item['quantity']}x ${item['name']}',
+                            style: TextStyle(fontSize: 13),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Text(
+                          '\$${(item['price'] * item['quantity']).toStringAsFixed(2)}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildImprovedMenuGrid() {
     return StreamBuilder<QuerySnapshot>(
       stream: _firestore
           .collection('menu_items')
@@ -1991,92 +4956,314 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
           .where('branchId', isEqualTo: 'Old_Airport')
           .snapshots(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
           return Center(child: CircularProgressIndicator());
         }
 
-        final menuItems = snapshot.data!.docs;
+        if (snapshot.hasError) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.error_outline, size: 48, color: Colors.red),
+                SizedBox(height: 16),
+                Text('Error loading menu'),
+                TextButton(
+                  onPressed: () => setState(() {}),
+                  child: Text('Retry'),
+                ),
+              ],
+            ),
+          );
+        }
 
-        return ListView.builder(
-          padding: EdgeInsets.all(16),
-          itemCount: menuItems.length,
-          itemBuilder: (context, index) {
-            final item = menuItems[index];
-            final itemData = item.data() as Map<String, dynamic>;
-            final name = itemData['name']?.toString() ?? 'Unknown Item';
-            final description = itemData['description']?.toString() ?? '';
-            final price = (itemData['price'] as num?)?.toDouble() ?? 0.0;
-            final imageUrl = itemData['imageUrl']?.toString();
-            final estimatedTime = itemData['EstimatedTime']?.toString() ?? '';
-            final isPopular = itemData['isPopular'] ?? false;
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.restaurant_menu, size: 64, color: Colors.grey[400]),
+                SizedBox(height: 16),
+                Text('No menu items available'),
+              ],
+            ),
+          );
+        }
 
-            return Card(
-              margin: EdgeInsets.only(bottom: 12),
-              elevation: 2,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: ListTile(
-                contentPadding: EdgeInsets.all(12),
-                leading: imageUrl != null
-                    ? ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.network(
-                    imageUrl,
-                    width: 60,
-                    height: 60,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) =>
-                        _buildPlaceholderIcon(),
-                  ),
-                )
-                    : _buildPlaceholderIcon(),
-                title: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        name,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w500,
+        final allMenuItems = snapshot.data!.docs;
+        final filteredItems = allMenuItems.where((item) {
+          if (_searchQuery.isEmpty) return true;
+          final data = item.data() as Map<String, dynamic>;
+          final name = data['name']?.toString().toLowerCase() ?? '';
+          final description = data['description']?.toString().toLowerCase() ?? '';
+          final category = data['categoryId']?.toString().toLowerCase() ?? '';
+
+          return name.contains(_searchQuery) ||
+              description.contains(_searchQuery) ||
+              category.contains(_searchQuery);
+        }).toList();
+
+        // Categorize items
+        Map<String, List<QueryDocumentSnapshot>> categorizedItems = {};
+        for (var item in filteredItems) {
+          final category = item['categoryId']?.toString() ?? 'Others';
+          if (!categorizedItems.containsKey(category)) {
+            categorizedItems[category] = [];
+            // Initialize category as expanded by default
+            if (!_expandedCategories.containsKey(category)) {
+              _expandedCategories[category] = true;
+            }
+          }
+          categorizedItems[category]!.add(item);
+        }
+
+        return CustomScrollView(
+          controller: _scrollController,
+          slivers: [
+            // Expand/Collapse all button
+            if (categorizedItems.length > 1)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      TextButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            final allExpanded = _expandedCategories.values.every((expanded) => expanded);
+                            _expandedCategories.updateAll((key, value) => !allExpanded);
+                          });
+                        },
+                        icon: Icon(
+                          _expandedCategories.values.every((expanded) => expanded)
+                              ? Icons.expand_less
+                              : Icons.expand_more,
+                          size: 20,
                         ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (isPopular) ...[
-                      SizedBox(width: 8),
-                      Container(
-                        padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.amber,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          'POPULAR',
-                          style: TextStyle(
-                            fontSize: 8,
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        label: Text(
+                          _expandedCategories.values.every((expanded) => expanded)
+                              ? 'Collapse All'
+                              : 'Expand All',
+                          style: TextStyle(fontSize: 14),
                         ),
                       ),
                     ],
+                  ),
+                ),
+              ),
+
+            // Categories
+            ...categorizedItems.entries.map((entry) {
+              final categoryName = entry.key;
+              final categoryItems = entry.value;
+              final isExpanded = _expandedCategories[categoryName] ?? true;
+
+              return SliverToBoxAdapter(
+                child: Container(
+                  margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 4,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      // Category header
+                      GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _expandedCategories[categoryName] = !isExpanded;
+                          });
+                        },
+                        child: Container(
+                          padding: EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: primaryColor.withOpacity(0.1),
+                            borderRadius: BorderRadius.vertical(
+                              top: Radius.circular(12),
+                              bottom: isExpanded ? Radius.zero : Radius.circular(12),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Text(
+                                categoryName,
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: primaryColor,
+                                ),
+                              ),
+                              Spacer(),
+                              Container(
+                                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: primaryColor.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  '${categoryItems.length}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: primaryColor,
+                                  ),
+                                ),
+                              ),
+                              SizedBox(width: 8),
+                              Icon(
+                                isExpanded ? Icons.expand_less : Icons.expand_more,
+                                color: primaryColor,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      // Category items
+                      if (isExpanded)
+                        Padding(
+                          padding: EdgeInsets.all(8),
+                          child: GridView.builder(
+                            shrinkWrap: true,
+                            physics: NeverScrollableScrollPhysics(),
+                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 2,
+                              childAspectRatio: 0.85,
+                              crossAxisSpacing: 8,
+                              mainAxisSpacing: 8,
+                            ),
+                            itemCount: categoryItems.length,
+                            itemBuilder: (context, index) {
+                              final item = categoryItems[index];
+                              final itemData = item.data() as Map<String, dynamic>;
+                              return _buildCleanMenuItemCard(item, itemData);
+                            },
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
+
+            // Bottom padding
+            SliverToBoxAdapter(
+              child: SizedBox(height: 100),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildCleanMenuItemCard(QueryDocumentSnapshot item, Map<String, dynamic> itemData) {
+    final name = itemData['name']?.toString() ?? 'Unknown Item';
+    final price = (itemData['price'] as num?)?.toDouble() ?? 0.0;
+    final imageUrl = itemData['imageUrl']?.toString();
+    final isPopular = itemData['isPopular'] ?? false;
+
+    final quantityInCart = _cartItems
+        .where((cartItem) => cartItem['id'] == item.id)
+        .fold(0, (sum, cartItem) => sum + (cartItem['quantity'] as int));
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: InkWell(
+        onTap: () => _showItemCustomizationDialog(item),
+        borderRadius: BorderRadius.circular(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Image section
+            Expanded(
+              flex: 3,
+              child: Container(
+                width: double.infinity,
+                child: Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+                      child: Container(
+                        width: double.infinity,
+                        height: double.infinity,
+                        child: imageUrl != null && imageUrl.isNotEmpty
+                            ? Image.network(
+                          imageUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
+                        )
+                            : _buildPlaceholder(),
+                      ),
+                    ),
+
+                    // Badges
+                    if (isPopular)
+                      Positioned(
+                        top: 6,
+                        right: 6,
+                        child: Container(
+                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: warningColor,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text('🔥', style: TextStyle(fontSize: 10)),
+                        ),
+                      ),
+
+                    if (quantityInCart > 0)
+                      Positioned(
+                        top: 6,
+                        left: 6,
+                        child: Container(
+                          padding: EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: successColor,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            '$quantityInCart',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
-                subtitle: Column(
+              ),
+            ),
+
+            // Content section
+            Expanded(
+              flex: 2,
+              child: Padding(
+                padding: EdgeInsets.all(8),
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (description.isNotEmpty)
-                      Text(
-                        description,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                    Text(
+                      name,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
                       ),
-                    SizedBox(height: 4),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+
+                    Spacer(),
+
                     Row(
                       children: [
                         Text(
@@ -2084,57 +5271,56 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: primaryColor,
+                            fontSize: 14,
                           ),
                         ),
-                        if (estimatedTime.isNotEmpty) ...[
-                          SizedBox(width: 16),
-                          Icon(Icons.timer, size: 12, color: Colors.grey),
-                          SizedBox(width: 4),
-                          Text(
-                            '$estimatedTime mins',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey,
+
+                        Spacer(),
+
+                        // Quick add button
+                        Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: primaryColor,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              onTap: () => _quickAddToCart(item),
+                              borderRadius: BorderRadius.circular(6),
+                              child: Icon(
+                                Icons.add,
+                                size: 16,
+                                color: Colors.white,
+                              ),
                             ),
                           ),
-                        ],
+                        ),
                       ],
                     ),
                   ],
                 ),
-                trailing: Container(
-                  decoration: BoxDecoration(
-                    color: primaryColor,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: IconButton(
-                    icon: Icon(Icons.add, color: Colors.white, size: 20),
-                    onPressed: () => _addToCart(item),
-                    padding: EdgeInsets.all(6),
-                  ),
-                ),
               ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildPlaceholderIcon() {
-    return Container(
-      width: 60,
-      height: 60,
-      decoration: BoxDecoration(
-        color: primaryColor.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
+            ),
+          ],
+        ),
       ),
-      child: Icon(Icons.restaurant_menu, color: primaryColor),
     );
   }
 
-  Widget? _buildBottomNavigationBar() {
-    if (_cartItems.isEmpty) return null;
+  Widget _buildPlaceholder() {
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      color: primaryColor.withOpacity(0.1),
+      child: Icon(Icons.restaurant_menu, color: primaryColor, size: 32),
+    );
+  }
+
+  Widget _buildMinimalBottomBar() {
+    if (_cartItems.isEmpty) return SizedBox.shrink();
 
     return Container(
       padding: EdgeInsets.all(16),
@@ -2142,85 +5328,229 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black12,
+            color: Colors.black.withOpacity(0.1),
             blurRadius: 8,
             offset: Offset(0, -2),
           ),
         ],
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(16),
-          topRight: Radius.circular(16),
-        ),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Total Amount',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey[600],
-                  ),
+      child: SafeArea(
+        child: Row(
+          children: [
+            // Clear cart button
+            OutlinedButton(
+              onPressed: _clearCart,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.red,
+                side: BorderSide(color: Colors.red),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(25),
                 ),
-                Text(
-                  '\$$_totalAmount',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: primaryColor,
-                  ),
-                ),
-                Text(
-                  '${_cartItems.length} item${_cartItems.length != 1 ? 's' : ''}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[500],
-                  ),
-                ),
-              ],
+              ),
+              child: Text('Clear'),
             ),
-          ),
-          ElevatedButton(
-            onPressed: _isSubmitting ? null : _submitTakeawayOrder,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primaryColor,
-              foregroundColor: Colors.white,
-              padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+
+            SizedBox(width: 12),
+
+            // Submit order button
+            Expanded(
+              child: ElevatedButton(
+                onPressed: _isSubmitting ? null : _submitTakeawayOrder,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: primaryColor,
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(25),
+                  ),
+                ),
+                child: _isSubmitting
+                    ? SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ),
+                )
+                    : Text(
+                  'Submit Order (\$${_totalAmount.toStringAsFixed(2)})',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
               ),
             ),
-            child: _isSubmitting
-                ? CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
-                : Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.check_circle_outline, size: 20),
-                SizedBox(width: 8),
-                Text(
-                  'Submit Order',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  void _addToCart(QueryDocumentSnapshot item) {
+  // Show customization dialog
+  void _showItemCustomizationDialog(QueryDocumentSnapshot item) {
+    final itemData = item.data() as Map<String, dynamic>;
+    final name = itemData['name']?.toString() ?? 'Unknown Item';
+    final price = (itemData['price'] as num?)?.toDouble() ?? 0.0;
+    final description = itemData['description']?.toString() ?? '';
+
+    final TextEditingController customNotesController = TextEditingController();
+    String selectedSize = 'Regular';
+    List<String> selectedAddons = [];
+    int quantity = 1;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(
+            name,
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (description.isNotEmpty)
+                  Padding(
+                    padding: EdgeInsets.only(bottom: 16),
+                    child: Text(
+                      description,
+                      style: TextStyle(color: Colors.grey[600]),
+                    ),
+                  ),
+
+                Text(
+                  'Price: \$${price.toStringAsFixed(2)}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: primaryColor,
+                    fontSize: 16,
+                  ),
+                ),
+                SizedBox(height: 16),
+
+                // Quantity selector
+                Text('Quantity:', style: TextStyle(fontWeight: FontWeight.w600)),
+                SizedBox(height: 8),
+                Row(
+                  children: [
+                    IconButton(
+                      onPressed: quantity > 1
+                          ? () => setDialogState(() => quantity--)
+                          : null,
+                      icon: Icon(Icons.remove_circle_outline),
+                    ),
+                    Container(
+                      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey[300]!),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        quantity.toString(),
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => setDialogState(() => quantity++),
+                      icon: Icon(Icons.add_circle_outline),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 16),
+
+                // Size options
+                Text('Size:', style: TextStyle(fontWeight: FontWeight.w600)),
+                SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  children: ['Small', 'Regular', 'Large'].map((size) {
+                    return ChoiceChip(
+                      label: Text(size),
+                      selected: selectedSize == size,
+                      onSelected: (selected) {
+                        if (selected) {
+                          setDialogState(() => selectedSize = size);
+                        }
+                      },
+                    );
+                  }).toList(),
+                ),
+                SizedBox(height: 16),
+
+                // Add-ons
+                Text('Add-ons:', style: TextStyle(fontWeight: FontWeight.w600)),
+                SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  children: ['Extra Cheese', 'Extra Sauce', 'Spicy', 'No Onions'].map((addon) {
+                    return FilterChip(
+                      label: Text(addon),
+                      selected: selectedAddons.contains(addon),
+                      onSelected: (selected) {
+                        setDialogState(() {
+                          if (selected) {
+                            selectedAddons.add(addon);
+                          } else {
+                            selectedAddons.remove(addon);
+                          }
+                        });
+                      },
+                    );
+                  }).toList(),
+                ),
+                SizedBox(height: 16),
+
+                // Custom notes
+                Text('Custom Notes:', style: TextStyle(fontWeight: FontWeight.w600)),
+                SizedBox(height: 8),
+                TextField(
+                  controller: customNotesController,
+                  decoration: InputDecoration(
+                    hintText: 'Any special instructions...',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  maxLines: 3,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                _addCustomizedToCart(
+                  item,
+                  quantity: quantity,
+                  size: selectedSize,
+                  addons: selectedAddons,
+                  notes: customNotesController.text,
+                );
+                Navigator.pop(context);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: primaryColor,
+                foregroundColor: Colors.white,
+              ),
+              child: Text('Add to Cart'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Quick add to cart (without customization)
+  void _quickAddToCart(QueryDocumentSnapshot item) {
     setState(() {
       final itemData = item.data() as Map<String, dynamic>;
       final existingIndex = _cartItems.indexWhere(
-              (cartItem) => cartItem['id'] == item.id);
+            (cartItem) => cartItem['id'] == item.id &&
+            (cartItem['customizations'] == null || cartItem['customizations'].isEmpty),
+      );
 
       if (existingIndex >= 0) {
         _cartItems[existingIndex]['quantity'] += 1;
@@ -2230,20 +5560,55 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
           'name': itemData['name']?.toString() ?? 'Unknown Item',
           'price': (itemData['price'] as num?)?.toDouble() ?? 0.0,
           'quantity': 1,
+          'customizations': {},
         });
       }
       _calculateTotal();
     });
+
+    if (_cartItems.length == 1) {
+      setState(() => _isCustomerInfoCollapsed = true);
+    }
   }
 
-  void _updateQuantity(int index, int change) {
+  // Add customized item to cart
+  void _addCustomizedToCart(
+      QueryDocumentSnapshot item, {
+        required int quantity,
+        required String size,
+        required List<String> addons,
+        required String notes,
+      }) {
     setState(() {
-      _cartItems[index]['quantity'] += change;
-      if (_cartItems[index]['quantity'] <= 0) {
-        _cartItems.removeAt(index);
-      }
+      final itemData = item.data() as Map<String, dynamic>;
+      final customizations = {
+        'size': size,
+        'addons': addons,
+        'notes': notes,
+      };
+
+      // Always add as new item for customized orders
+      _cartItems.add({
+        'id': item.id,
+        'name': itemData['name']?.toString() ?? 'Unknown Item',
+        'price': (itemData['price'] as num?)?.toDouble() ?? 0.0,
+        'quantity': quantity,
+        'customizations': customizations,
+      });
       _calculateTotal();
     });
+
+    if (_cartItems.length == 1) {
+      setState(() => _isCustomerInfoCollapsed = true);
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Added to cart with customizations!'),
+        backgroundColor: successColor,
+        duration: Duration(seconds: 2),
+      ),
+    );
   }
 
   void _calculateTotal() {
@@ -2252,15 +5617,45 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
     });
   }
 
+  void _clearCart() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Clear Cart'),
+        content: Text('Remove all items from cart?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _cartItems.clear();
+                _totalAmount = 0.0;
+              });
+              Navigator.pop(context);
+            },
+            child: Text('Clear', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _submitTakeawayOrder() async {
-    // Validate customer information
-    if (_customerNameController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Please enter customer name'),
-          backgroundColor: Colors.red,
-        ),
-      );
+    if (_customerNameController.text.trim().isEmpty) {
+      _showErrorSnackBar('Please enter customer name');
+      return;
+    }
+
+    if (_customerPhoneController.text.trim().isEmpty) {
+      _showErrorSnackBar('Please enter phone number');
+      return;
+    }
+
+    if (_orderType == 'curbside' && _vehicleInfoController.text.trim().isEmpty) {
+      _showErrorSnackBar('Please enter vehicle information for curbside service');
       return;
     }
 
@@ -2276,11 +5671,15 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
 
       final dailyOrderNumber = ordersToday.size + 1;
 
-      // Create takeaway order document
       await _firestore.collection('Orders').add({
-        'order_type': 'takeaway',
-        'customerName': _customerNameController.text,
-        'customerPhone': _customerPhoneController.text,
+        'order_type': 'external',
+        'service_type': _orderType,
+        'payment_method': _paymentMethod,
+        'customerName': _customerNameController.text.trim(),
+        'customerPhone': _customerPhoneController.text.trim(),
+        'vehicleInfo': _vehicleInfoController.text.trim(),
+        'specialInstructions': _specialInstructionsController.text.trim(),
+        'estimatedWaitTime': _waitTimeController.text.trim(),
         'items': _cartItems,
         'subtotal': _totalAmount,
         'totalAmount': _totalAmount,
@@ -2288,34 +5687,81 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
         'timestamp': Timestamp.now(),
         'dailyOrderNumber': dailyOrderNumber,
         'branchId': 'Old_Airport',
+        'orderTime': DateFormat('HH:mm').format(now),
+        'waiterName': 'Outdoor Staff',
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Takeaway order submitted successfully!'),
-          backgroundColor: Colors.green,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-
-      // Clear the form
-      setState(() {
-        _cartItems.clear();
-        _totalAmount = 0.0;
-        _customerNameController.clear();
-        _customerPhoneController.clear();
-        _isSubmitting = false;
-      });
+      _showSuccessDialog();
+      _clearFormAfterSubmit();
 
     } catch (e) {
       setState(() => _isSubmitting = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error submitting order: $e'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      _showErrorSnackBar('Error submitting order: $e');
     }
   }
+
+  void _showSuccessDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.check_circle, color: successColor),
+            SizedBox(width: 8),
+            Text('Order Submitted!'),
+          ],
+        ),
+        content: Text('The order has been sent to the kitchen successfully.'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              setState(() => _isSubmitting = false);
+            },
+            child: Text('Continue Taking Orders'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+        margin: EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+  }
+
+  void _clearFormAfterSubmit() {
+    setState(() {
+      _cartItems.clear();
+      _totalAmount = 0.0;
+      _customerNameController.clear();
+      _customerPhoneController.clear();
+      _vehicleInfoController.clear();
+      _specialInstructionsController.clear();
+      _waitTimeController.clear();
+      _isCustomerInfoCollapsed = true;
+    });
+  }
+
+  @override
+  void dispose() {
+    _customerNameController.dispose();
+    _customerPhoneController.dispose();
+    _vehicleInfoController.dispose();
+    _specialInstructionsController.dispose();
+    _waitTimeController.dispose();
+    _searchController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
 }
+
+
