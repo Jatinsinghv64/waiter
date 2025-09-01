@@ -1,4 +1,6 @@
 // Main App Structure
+import 'dart:async';
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -1708,6 +1710,8 @@ class _OrderScreenState extends State<OrderScreen> {
   bool _isCheckingOut = false;
   String _tableStatus = 'available';
   String _searchQuery = '';
+  StreamSubscription? _tableStatusSubscription;
+  bool _isToggling = false;
 
   @override
   void initState() {
@@ -1717,6 +1721,8 @@ class _OrderScreenState extends State<OrderScreen> {
     if (widget.isAddingToExisting && widget.existingOrderId != null) {
       _loadExistingOrder();
     }
+
+    _listenToTableStatus();
 
     // Add listener for search functionality
     _searchController.addListener(() {
@@ -1729,7 +1735,168 @@ class _OrderScreenState extends State<OrderScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _tableStatusSubscription?.cancel();
     super.dispose();
+  }
+
+  void _listenToTableStatus() {
+    _tableStatusSubscription = _firestore
+        .collection('Branch')
+        .doc('Old_Airport')
+        .snapshots()
+        .listen((snapshot) {
+      if (snapshot.exists) {
+        final branchData = snapshot.data() as Map<String, dynamic>;
+        final tables = branchData['Tables'] as Map<String, dynamic>?;
+        if (tables != null && tables.containsKey(widget.tableNumber)) {
+          final tableData = tables[widget.tableNumber] as Map<String, dynamic>;
+          final newStatus = tableData['status']?.toString() ?? 'available';
+          if (mounted) {
+            setState(() {
+              _tableStatus = newStatus;
+            });
+          }
+        }
+      }
+    });
+  }
+
+  String _getStatusDisplayText(String status) {
+    switch (status) {
+      case 'available':
+        return 'Available';
+      case 'occupied':
+        return 'Occupied';
+      case 'ordered':
+        return 'Order Pending';
+      default:
+        return 'Unknown';
+    }
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'available':
+        return Colors.greenAccent;
+      case 'occupied':
+        return Colors.orangeAccent;
+      case 'ordered':
+        return Colors.redAccent;
+      default:
+        return Colors.white;
+    }
+  }
+
+  Future<void> _toggleTableAvailability() async {
+    if (_isToggling) return;
+
+    setState(() => _isToggling = true);
+
+    try {
+      if (_tableStatus == 'available') {
+        // Mark as occupied
+        await _firestore.collection('Branch').doc('Old_Airport').update({
+          'Tables.${widget.tableNumber}.status': 'occupied',
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Table ${widget.tableNumber} marked as occupied!'),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      } else {
+        // Mark as available (with confirmation for occupied/ordered tables)
+        if (_tableStatus == 'occupied' || _tableStatus == 'ordered') {
+          _showMarkAvailableDialog();
+        }
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error updating table status: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      setState(() => _isToggling = false);
+    }
+  }
+
+  void _showMarkAvailableDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orange),
+              SizedBox(width: 8),
+              Text('Mark Table Available'),
+            ],
+          ),
+          content: Text(
+            'Are you sure you want to mark Table ${widget.tableNumber} as available?\n\n'
+                'This will clear any pending orders and reset the table status.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                setState(() => _isToggling = false);
+              },
+              child: Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _markTableAvailable();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+              ),
+              child: Text('Mark Available'),
+            ),
+          ],
+        );
+      },
+    ).then((_) {
+      // Reset toggling state if dialog is dismissed
+      setState(() => _isToggling = false);
+    });
+  }
+
+  Future<void> _markTableAvailable() async {
+    try {
+      // Update table status in Firestore
+      await _firestore.collection('Branch').doc('Old_Airport').update({
+        'Tables.${widget.tableNumber}.status': 'available',
+        'Tables.${widget.tableNumber}.currentOrderId': FieldValue.delete(),
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Table ${widget.tableNumber} marked as available!'),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error updating table status: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      setState(() => _isToggling = false);
+    }
   }
 
   Future<void> _loadExistingOrder() async {
@@ -1755,14 +1922,66 @@ class _OrderScreenState extends State<OrderScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          widget.isAddingToExisting
-              ? 'Add to Table ${widget.tableNumber} Order'
-              : 'Table ${widget.tableNumber} Order',
-          style: TextStyle(fontWeight: FontWeight.bold),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.isAddingToExisting
+                  ? 'Add to Table ${widget.tableNumber} Order'
+                  : 'Table ${widget.tableNumber} Order',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+              ),
+            ),
+            Text(
+              'Status: ${_getStatusDisplayText(_tableStatus)}',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+                color: _getStatusColor(_tableStatus),
+              ),
+            ),
+          ],
         ),
         backgroundColor: primaryColor,
         foregroundColor: Colors.white,
+        actions: [
+          // Toggle Button for Table Availability
+          Container(
+            margin: EdgeInsets.only(right: 8),
+            child: _isToggling
+                ? Container(
+              width: 40,
+              height: 40,
+              child: Center(
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ),
+                ),
+              ),
+            )
+                : Switch(
+              value: _tableStatus == 'available',
+              onChanged: (_) => _toggleTableAvailability(),
+              activeColor: Colors.green,
+              inactiveThumbColor: Colors.orange,
+              inactiveTrackColor: Colors.orange.withOpacity(0.3),
+              activeTrackColor: Colors.green.withOpacity(0.3),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+          // Additional info button
+          IconButton(
+            icon: Icon(Icons.info_outline),
+            onPressed: () => _showTableInfo(),
+            tooltip: 'Table Information',
+          ),
+        ],
       ),
       body: Container(
         decoration: BoxDecoration(
@@ -1813,6 +2032,63 @@ class _OrderScreenState extends State<OrderScreen> {
         ),
       ),
       bottomNavigationBar: _buildBottomNavigationBar(),
+    );
+  }
+
+  void _showTableInfo() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.table_restaurant, color: primaryColor),
+              SizedBox(width: 8),
+              Text('Table ${widget.tableNumber} Info'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildInfoRow('Status', _getStatusDisplayText(_tableStatus), _getStatusColor(_tableStatus)),
+              SizedBox(height: 8),
+              _buildInfoRow('Current Order', _existingOrderItems.isNotEmpty ? 'Yes' : 'No', null),
+              SizedBox(height: 8),
+              _buildInfoRow('Items in Cart', '${_cartItems.length}', null),
+              if (_totalAmount > 0) ...[
+                SizedBox(height: 8),
+                _buildInfoRow('Cart Total', '\$${_totalAmount.toStringAsFixed(2)}', null),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value, Color? valueColor) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          '$label:',
+          style: TextStyle(fontWeight: FontWeight.w500),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            color: valueColor ?? Colors.grey[700],
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
     );
   }
 
@@ -2407,8 +2683,6 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
-  // [Rest of the methods remain the same - _addToCart, _updateQuantity, etc.]
-
   void _addToCart(QueryDocumentSnapshot item) {
     setState(() {
       final itemData = item.data() as Map<String, dynamic>;
@@ -2448,7 +2722,9 @@ class _OrderScreenState extends State<OrderScreen> {
 
   void _calculateTotal() {
     _totalAmount = _cartItems.fold(0.0, (sum, item) {
-      return sum + (item['price'] * item['quantity']);
+      final double price = (item['price'] as num).toDouble();
+      final int quantity = (item['quantity'] as num).toInt();
+      return sum + (price * quantity);
     });
   }
 
@@ -2504,7 +2780,7 @@ class _OrderScreenState extends State<OrderScreen> {
 
     // Create order document
     final orderRef = await _firestore.collection('Orders').add({
-      'order_type': 'dine_in',
+      'Order_type': 'dine_in',
       'tableNumber': widget.tableNumber,
       'items': _cartItems,
       'subtotal': _totalAmount,
@@ -2720,6 +2996,8 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 }
+
+
 
 
 
@@ -2947,7 +3225,7 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
           .where('status', whereIn: ['pending', 'preparing', 'prepared']);
 
       if (orderType != 'all') {
-        query = query.where('order_type', isEqualTo: orderType);
+        query = query.where('Order_type', isEqualTo: orderType);
       }
 
       return query.orderBy('timestamp', descending: true).snapshots();
@@ -3080,7 +3358,7 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
 
   Widget _buildOrderCard(QueryDocumentSnapshot order, bool isPriority) {
     final orderData = order.data() as Map<String, dynamic>;
-    final orderType = orderData['order_type']?.toString() ?? 'dine_in';
+    final orderType = orderData['Order_type']?.toString() ?? 'dine_in';
     final tableNumber = orderData['tableNumber']?.toString();
     final customerName = orderData['customerName']?.toString();
     final status = orderData['status']?.toString() ?? 'unknown';
@@ -3362,12 +3640,6 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
 // Placeholder OrderDetailScreen, replace with your actual detail screen widget
 
 
-// Placeholder for OrderDetailScreen - replace with your actual implementation
-
-
-
-// Order Detail Screen
-
 
 class OrderDetailScreen extends StatefulWidget {
   final QueryDocumentSnapshot order;
@@ -3389,7 +3661,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     final orderData = widget.order.data() as Map<String, dynamic>;
     final items = List<Map<String, dynamic>>.from(orderData['items'] ?? []);
     final status = orderData['status']?.toString() ?? 'unknown';
-    final orderType = orderData['order_type']?.toString() ?? 'dine_in';
+    final orderType = orderData['Order_type']?.toString() ?? 'dine_in';
     final tableNumber = orderData['tableNumber']?.toString();
     final dailyOrderNumber = orderData['dailyOrderNumber']?.toString() ?? '';
     final totalAmount = (orderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
@@ -4241,7 +4513,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
       // Clear table if it's a dine-in order
       final orderData = widget.order.data() as Map<String, dynamic>;
-      final orderType = orderData['order_type']?.toString() ?? 'dine_in';
+      final orderType = orderData['Order_type']?.toString() ?? 'dine_in';
 
       if (orderType == 'dine_in') {
         final tableNumber = orderData['tableNumber']?.toString();
@@ -5609,228 +5881,287 @@ class _AllMenuItemsTabState extends State<AllMenuItemsTab>
 
 
 
-
 class TakeawayOrderScreen extends StatefulWidget {
   @override
   _TakeawayOrderScreenState createState() => _TakeawayOrderScreenState();
 }
 
-class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
+class _TakeawayOrderScreenState extends State<TakeawayOrderScreen>
+    with TickerProviderStateMixin {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final Color primaryColor = Color(0xFF1976D2);
-  final Color secondaryColor = Color(0xFFE3F2FD);
+
+  // Changed to blue color scheme
+  final Color primaryColor = Color(0xFF1565C0); // Blue
+  final Color secondaryColor = Color(0xFFF8F8F8);
+  final Color accentColor = Color(0xFF42A5F5); // Light blue
   final Color successColor = Color(0xFF4CAF50);
   final Color warningColor = Color(0xFFFF9800);
 
   List<Map<String, dynamic>> _cartItems = [];
   double _totalAmount = 0.0;
+  // Removed platform fee and GST variables
+
   final TextEditingController _customerNameController = TextEditingController();
   final TextEditingController _customerPhoneController = TextEditingController();
-  final TextEditingController _vehicleInfoController = TextEditingController();
   final TextEditingController _specialInstructionsController = TextEditingController();
-  final TextEditingController _waitTimeController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
 
   bool _isSubmitting = false;
-  String _orderType = 'pickup';
+  String _orderType = 'takeaway'; // Fixed to takeaway
   String _paymentMethod = 'cash';
-  bool _isCustomerInfoCollapsed = true;
   String _searchQuery = '';
+  String _selectedCategory = 'All';
+  bool _showFilters = false;
+  bool _showSubtotalDetails = false;
+
+  late AnimationController _cartAnimationController;
+  late AnimationController _filterAnimationController;
+  late AnimationController _subtotalAnimationController;
+  late Animation<double> _cartSlideAnimation;
+  late Animation<double> _filterSlideAnimation;
+  late Animation<double> _subtotalSlideAnimation;
+
   final ScrollController _scrollController = ScrollController();
-
-  // New variables for category management
+  List<String> _categories = ['All'];
   Map<String, bool> _expandedCategories = {};
-  bool _showCartSummary = false;
-
-  void _debugFirestore() async {
-    try {
-      final QuerySnapshot result = await _firestore
-          .collection('menu_items')
-          .where('isAvailable', isEqualTo: true)
-          .where('branchId', isEqualTo: 'Old_Airport')
-          .get();
-
-      print('DEBUG: Found ${result.docs.length} documents');
-      for (var doc in result.docs) {
-        print('DEBUG: Document ID: ${doc.id}, Data: ${doc.data()}');
-      }
-    } catch (e) {
-      print('DEBUG: Error fetching data: $e');
-    }
-  }
 
   @override
   void initState() {
     super.initState();
-    _debugFirestore();
+
+    _cartAnimationController = AnimationController(
+      duration: Duration(milliseconds: 300),
+      vsync: this,
+    );
+
+    _filterAnimationController = AnimationController(
+      duration: Duration(milliseconds: 400),
+      vsync: this,
+    );
+
+    _subtotalAnimationController = AnimationController(
+      duration: Duration(milliseconds: 300),
+      vsync: this,
+    );
+
+    _cartSlideAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _cartAnimationController,
+      curve: Curves.easeOutCubic,
+    ));
+
+    _filterSlideAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _filterAnimationController,
+      curve: Curves.easeOutCubic,
+    ));
+
+    _subtotalSlideAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _subtotalAnimationController,
+      curve: Curves.easeInOut,
+    ));
+
     _searchController.addListener(() {
       setState(() {
         _searchQuery = _searchController.text.toLowerCase();
       });
     });
+
+    _loadCategories();
+  }
+
+  void _loadCategories() async {
+    try {
+      final snapshot = await _firestore
+          .collection('menu_categories')
+          .where('isActive', isEqualTo: true)
+          .where('branchId', isEqualTo: 'Old_Airport')
+          .orderBy('sortOrder')
+          .get();
+
+      setState(() {
+        _categories = ['All'];
+        _categories.addAll(
+            snapshot.docs.map((doc) => doc['name'].toString()).toList()
+        );
+      });
+    } catch (e) {
+      print('Error loading categories: $e');
+    }
+  }
+
+  @override
+  void dispose() {
+    _cartAnimationController.dispose();
+    _filterAnimationController.dispose();
+    _subtotalAnimationController.dispose();
+    _customerNameController.dispose();
+    _customerPhoneController.dispose();
+    _specialInstructionsController.dispose();
+    _searchController.dispose();
+    _scrollController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50],
-      appBar: _buildCleanAppBar(),
-      body: Column(
-        children: [
-          // Compact header section
-          _buildCompactHeader(),
-
-          // Search bar (always visible)
-          _buildImprovedSearchBar(),
-
-          // Expandable cart summary
-          if (_cartItems.isNotEmpty) _buildExpandableCartSummary(),
-
-          // Menu section with improved scrolling
-          Expanded(child: _buildImprovedMenuGrid()),
+      backgroundColor: Colors.white,
+      body: CustomScrollView(
+        controller: _scrollController,
+        slivers: [
+          _buildTakeawayAppBar(),
+          _buildSearchAndFilter(),
+          if (_showFilters) _buildFilterSection(),
+          _buildMenuContent(),
         ],
       ),
-      bottomNavigationBar: _buildMinimalBottomBar(),
+      bottomNavigationBar: _buildCartBottomBar(),
+      floatingActionButton: _cartItems.isNotEmpty
+          ? _buildFloatingCartButton()
+          : null,
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
 
-  PreferredSizeWidget _buildCleanAppBar() {
-    return AppBar(
-      title: Text('Takeaway Orders'),
+  Widget _buildTakeawayAppBar() {
+    return SliverAppBar(
+      expandedHeight: 180.0,
+      pinned: true,
       backgroundColor: primaryColor,
-      foregroundColor: Colors.white,
       elevation: 0,
-      actions: [
-        if (_cartItems.isNotEmpty)
-          Container(
-            margin: EdgeInsets.only(right: 16),
-            child: Center(
-              child: Container(
-                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: warningColor,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  '${_cartItems.length}',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildCompactHeader() {
-    return Container(
-      color: Colors.white,
-      child: Column(
-        children: [
-          // Service type and payment in one compact row
-          Padding(
-            padding: EdgeInsets.all(16),
-            child: Row(
-              children: [
-                // Service Type Toggle
-                Expanded(
-                  flex: 2,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.grey[100],
-                      borderRadius: BorderRadius.circular(25),
-                    ),
-                    child: Row(
-                      children: [
-                        _buildServiceTypeButton('pickup', Icons.store, 'Pickup'),
-                        _buildServiceTypeButton('curbside', Icons.directions_car, 'Curbside'),
-                      ],
-                    ),
-                  ),
-                ),
-
-                SizedBox(width: 16),
-
-                // Payment method dropdown (compact)
-                Expanded(
-                  child: Container(
-                    height: 45,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(25),
-                      border: Border.all(color: Colors.grey[300]!),
-                    ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: _paymentMethod,
-                        isExpanded: true,
-                        items: [
-                          DropdownMenuItem(value: 'cash', child: Text('💵 Cash')),
-                          DropdownMenuItem(value: 'card', child: Text('💳 Card')),
-                          DropdownMenuItem(value: 'upi', child: Text('📱 UPI')),
-                        ],
-                        onChanged: (value) => setState(() => _paymentMethod = value!),
-                        padding: EdgeInsets.symmetric(horizontal: 16),
-                      ),
-                    ),
-                  ),
-                ),
-
-                SizedBox(width: 12),
-
-                // Customer info toggle button
-                Container(
-                  decoration: BoxDecoration(
-                    color: _isCustomerInfoCollapsed ? Colors.grey[200] : primaryColor,
-                    borderRadius: BorderRadius.circular(25),
-                  ),
-                  child: IconButton(
-                    onPressed: () => setState(() => _isCustomerInfoCollapsed = !_isCustomerInfoCollapsed),
-                    icon: Icon(
-                      Icons.person,
-                      color: _isCustomerInfoCollapsed ? Colors.grey[600] : Colors.white,
-                    ),
-                  ),
-                ),
+      iconTheme: IconThemeData(color: Colors.white),
+      flexibleSpace: FlexibleSpaceBar(
+        background: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                primaryColor,
+                primaryColor.withOpacity(0.8),
               ],
             ),
           ),
-
-          // Collapsible customer info
-          if (!_isCustomerInfoCollapsed) _buildCompactCustomerInfo(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildServiceTypeButton(String type, IconData icon, String label) {
-    final isSelected = _orderType == type;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => _orderType = type),
-        child: Container(
-          padding: EdgeInsets.symmetric(vertical: 12),
-          decoration: BoxDecoration(
-            color: isSelected ? primaryColor : Colors.transparent,
-            borderRadius: BorderRadius.circular(25),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          child: Stack(
             children: [
-              Icon(
-                icon,
-                color: isSelected ? Colors.white : Colors.grey[600],
-                size: 18,
+              Positioned(
+                right: -100,
+                top: -50,
+                child: Container(
+                  width: 300,
+                  height: 300,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withOpacity(0.1),
+                  ),
+                ),
               ),
-              SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  color: isSelected ? Colors.white : Colors.grey[600],
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
+              Positioned(
+                left: -50,
+                bottom: -100,
+                child: Container(
+                  width: 200,
+                  height: 200,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withOpacity(0.05),
+                  ),
+                ),
+              ),
+              SafeArea(
+                child: Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(height: 20),
+                      Row(
+                        children: [
+                          Container(
+                            padding: EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(
+                              Icons.store,
+                              color: Colors.white,
+                              size: 24,
+                            ),
+                          ),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Order for Takeaway',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                Text(
+                                  'Quick • Fresh • Ready to Go',
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (_cartItems.isNotEmpty)
+                            Container(
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: accentColor,
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.2),
+                                    blurRadius: 8,
+                                    offset: Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.shopping_cart,
+                                      color: Colors.white, size: 16),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    '${_cartItems.length}',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                      Spacer(),
+                      Text(
+                        '15 min preparation • Old Airport Branch',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -5840,791 +6171,1067 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
     );
   }
 
-  Widget _buildCompactCustomerInfo() {
-    return Container(
-      padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(
+  Widget _buildSearchAndFilter() {
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        child: Row(
+          children: [
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.grey[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey[200]!),
+                ),
                 child: TextField(
-                  controller: _customerNameController,
+                  controller: _searchController,
                   decoration: InputDecoration(
-                    labelText: 'Customer Name *',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                    isDense: true,
+                    hintText: 'Search for dishes, cuisines...',
+                    hintStyle: TextStyle(color: Colors.grey[500]),
+                    prefixIcon: Icon(Icons.search, color: Colors.grey[500], size: 20),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                      icon: Icon(Icons.clear, size: 18),
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() => _searchQuery = '');
+                      },
+                    )
+                        : null,
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.symmetric(vertical: 16),
                   ),
                 ),
               ),
-              SizedBox(width: 12),
-              Expanded(
-                child: TextField(
-                  controller: _customerPhoneController,
-                  decoration: InputDecoration(
-                    labelText: 'Phone *',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                    isDense: true,
+            ),
+            SizedBox(width: 12),
+            GestureDetector(
+              onTap: () {
+                setState(() => _showFilters = !_showFilters);
+                if (_showFilters) {
+                  _filterAnimationController.forward();
+                } else {
+                  _filterAnimationController.reverse();
+                }
+                HapticFeedback.selectionClick();
+              },
+              child: Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: _showFilters ? primaryColor : Colors.grey[100],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _showFilters ? primaryColor : Colors.grey[300]!,
                   ),
-                  keyboardType: TextInputType.phone,
                 ),
-              ),
-            ],
-          ),
-
-          if (_orderType == 'curbside') ...[
-            SizedBox(height: 12),
-            TextField(
-              controller: _vehicleInfoController,
-              decoration: InputDecoration(
-                labelText: 'Vehicle Info (Color, Model)',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                isDense: true,
+                child: Icon(
+                  Icons.tune,
+                  color: _showFilters ? Colors.white : Colors.grey[600],
+                  size: 20,
+                ),
               ),
             ),
           ],
-
-          SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _waitTimeController,
-                  decoration: InputDecoration(
-                    labelText: 'Wait Time (mins)',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                    isDense: true,
-                  ),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-              SizedBox(width: 12),
-              Expanded(
-                child: TextField(
-                  controller: _specialInstructionsController,
-                  decoration: InputDecoration(
-                    labelText: 'Special Notes',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                    isDense: true,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildImprovedSearchBar() {
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: Colors.white,
-      child: TextField(
-        controller: _searchController,
-        decoration: InputDecoration(
-          hintText: 'Search dishes...',
-          prefixIcon: Icon(Icons.search, color: primaryColor, size: 20),
-          suffixIcon: _searchQuery.isNotEmpty
-              ? IconButton(
-            icon: Icon(Icons.clear, size: 20),
-            onPressed: () {
-              _searchController.clear();
-              setState(() => _searchQuery = '');
-            },
-          )
-              : null,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(25),
-            borderSide: BorderSide(color: Colors.grey[300]!),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(25),
-            borderSide: BorderSide(color: primaryColor, width: 1),
-          ),
-          contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-          filled: true,
-          fillColor: Colors.grey[50],
-          isDense: true,
         ),
       ),
     );
   }
 
-  Widget _buildExpandableCartSummary() {
+  Widget _buildFilterSection() {
+    return SliverToBoxAdapter(
+      child: AnimatedBuilder(
+        animation: _filterSlideAnimation,
+        builder: (context, child) {
+          return Transform.translate(
+            offset: Offset(0, -50 * (1 - _filterSlideAnimation.value)),
+            child: Opacity(
+              opacity: _filterSlideAnimation.value,
+              child: Container(
+                margin: EdgeInsets.all(16),
+                padding: EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 10,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Filter by Category',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => setState(() => _selectedCategory = 'All'),
+                          child: Text(
+                            'Clear',
+                            style: TextStyle(color: primaryColor),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _categories.map((category) {
+                        final isSelected = _selectedCategory == category;
+                        return GestureDetector(
+                          onTap: () {
+                            setState(() => _selectedCategory = category);
+                            HapticFeedback.selectionClick();
+                          },
+                          child: Container(
+                            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: isSelected ? primaryColor : Colors.grey[100],
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: isSelected ? primaryColor : Colors.grey[300]!,
+                              ),
+                            ),
+                            child: Text(
+                              category,
+                              style: TextStyle(
+                                color: isSelected ? Colors.white : Colors.grey[700],
+                                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildMenuContent() {
+    return SliverPadding(
+      padding: EdgeInsets.all(16),
+      sliver: StreamBuilder<QuerySnapshot>(
+        stream: _firestore
+            .collection('menu_items')
+            .where('isAvailable', isEqualTo: true)
+            .where('branchId', isEqualTo: 'Old_Airport')
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return SliverToBoxAdapter(
+              child: _buildLoadingState(),
+            );
+          }
+
+          if (snapshot.hasError) {
+            return SliverToBoxAdapter(
+              child: _buildErrorState('Something went wrong!'),
+            );
+          }
+
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+            return SliverToBoxAdapter(
+              child: _buildEmptyState(),
+            );
+          }
+
+          final allItems = snapshot.data!.docs;
+          final filteredItems = _filterItems(allItems);
+
+          if (filteredItems.isEmpty) {
+            return SliverToBoxAdapter(
+              child: _buildNoResultsState(),
+            );
+          }
+
+          final categorizedItems = _groupItemsByCategory(filteredItems);
+
+          return SliverList(
+            delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                final entry = categorizedItems.entries.elementAt(index);
+                return _buildCategorySection(entry.key, entry.value);
+              },
+              childCount: categorizedItems.length,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  List<QueryDocumentSnapshot> _filterItems(List<QueryDocumentSnapshot> items) {
+    return items.where((item) {
+      final itemData = item.data() as Map<String, dynamic>;
+
+      if (_selectedCategory != 'All') {
+        final category = itemData['categoryId']?.toString() ?? '';
+        if (category != _selectedCategory) return false;
+      }
+
+      if (_searchQuery.isNotEmpty) {
+        final name = itemData['name']?.toString().toLowerCase() ?? '';
+        final description = itemData['description']?.toString().toLowerCase() ?? '';
+        if (!name.contains(_searchQuery) && !description.contains(_searchQuery)) {
+          return false;
+        }
+      }
+
+      return true;
+    }).toList();
+  }
+
+  Map<String, List<QueryDocumentSnapshot>> _groupItemsByCategory(
+      List<QueryDocumentSnapshot> items) {
+    final Map<String, List<QueryDocumentSnapshot>> grouped = {};
+
+    for (final item in items) {
+      final category = item['categoryId']?.toString() ?? 'Others';
+      if (!grouped.containsKey(category)) {
+        grouped[category] = [];
+      }
+      grouped[category]!.add(item);
+    }
+
+    return grouped;
+  }
+
+  Widget _buildCategorySection(String category, List<QueryDocumentSnapshot> items) {
+    final isExpanded = _expandedCategories[category] ?? true;
+
     return Container(
-      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      margin: EdgeInsets.only(bottom: 20),
       decoration: BoxDecoration(
-        color: primaryColor.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: primaryColor.withOpacity(0.3)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         children: [
           GestureDetector(
-            onTap: () => setState(() => _showCartSummary = !_showCartSummary),
-            child: Padding(
-              padding: EdgeInsets.all(12),
+            onTap: () {
+              setState(() {
+                _expandedCategories[category] = !isExpanded;
+              });
+              HapticFeedback.selectionClick();
+            },
+            child: Container(
+              padding: EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: primaryColor.withOpacity(0.05),
+                borderRadius: BorderRadius.vertical(
+                  top: Radius.circular(16),
+                  bottom: isExpanded ? Radius.zero : Radius.circular(16),
+                ),
+              ),
               child: Row(
                 children: [
-                  Icon(Icons.shopping_cart, color: primaryColor, size: 20),
-                  SizedBox(width: 8),
-                  Text(
-                    '${_cartItems.length} items',
-                    style: TextStyle(fontWeight: FontWeight.w500),
-                  ),
-                  Spacer(),
-                  Text(
-                    '\$${_totalAmount.toStringAsFixed(2)}',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
+                  Container(
+                    padding: EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: primaryColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      Icons.restaurant_menu,
                       color: primaryColor,
-                      fontSize: 16,
+                      size: 20,
                     ),
                   ),
-                  SizedBox(width: 8),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          category,
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey[800],
+                          ),
+                        ),
+                        Text(
+                          '${items.length} item${items.length != 1 ? 's' : ''}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   Icon(
-                    _showCartSummary ? Icons.expand_less : Icons.expand_more,
+                    isExpanded ? Icons.expand_less : Icons.expand_more,
                     color: primaryColor,
                   ),
                 ],
               ),
             ),
           ),
-
-          if (_showCartSummary) ...[
-            Divider(height: 1, color: primaryColor.withOpacity(0.3)),
-            Container(
-              constraints: BoxConstraints(maxHeight: 150),
+          AnimatedContainer(
+            duration: Duration(milliseconds: 300),
+            height: isExpanded ? null : 0,
+            child: AnimatedOpacity(
+              duration: Duration(milliseconds: 300),
+              opacity: isExpanded ? 1.0 : 0.0,
               child: ListView.builder(
                 shrinkWrap: true,
-                padding: EdgeInsets.all(8),
-                itemCount: _cartItems.length,
+                physics: NeverScrollableScrollPhysics(),
+                itemCount: items.length,
                 itemBuilder: (context, index) {
-                  final item = _cartItems[index];
-                  return Padding(
-                    padding: EdgeInsets.symmetric(vertical: 2),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '${item['quantity']}x ${item['name']}',
-                            style: TextStyle(fontSize: 13),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        Text(
-                          '\$${(item['price'] * item['quantity']).toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
+                  return _buildZomatoMenuItem(items[index]);
                 },
               ),
             ),
-          ],
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildImprovedMenuGrid() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: _firestore
-          .collection('menu_items')
-          .where('isAvailable', isEqualTo: true)
-          .where('branchId', isEqualTo: 'Old_Airport')
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return Center(child: CircularProgressIndicator());
-        }
+  Widget _buildZomatoMenuItem(QueryDocumentSnapshot item) {
+    final itemData = item.data() as Map<String, dynamic>;
+    final name = itemData['name']?.toString() ?? 'Unknown Item';
+    final description = itemData['description']?.toString() ?? '';
+    final price = (itemData['price'] as num?)?.toDouble() ?? 0.0;
+    final imageUrl = itemData['imageUrl']?.toString();
+    final isPopular = itemData['isPopular'] ?? false;
+    final rating = (itemData['rating'] as num?)?.toDouble() ?? 4.0;
+    final estimatedTime = itemData['EstimatedTime']?.toString() ?? '';
 
-        if (snapshot.hasError) {
-          return Center(
+    final quantityInCart = _cartItems
+        .where((cartItem) => cartItem['id'] == item.id)
+        .fold(0, (sum, cartItem) => sum + (cartItem['quantity'] as num).toInt());
+
+    return Container(
+      padding: EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: Colors.grey[100]!, width: 1),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            flex: 2,
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.error_outline, size: 48, color: Colors.red),
-                SizedBox(height: 16),
-                Text('Error loading menu'),
-                TextButton(
-                  onPressed: () => setState(() {}),
-                  child: Text('Retry'),
-                ),
-              ],
-            ),
-          );
-        }
-
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.restaurant_menu, size: 64, color: Colors.grey[400]),
-                SizedBox(height: 16),
-                Text('No menu items available'),
-              ],
-            ),
-          );
-        }
-
-        final allMenuItems = snapshot.data!.docs;
-        final filteredItems = allMenuItems.where((item) {
-          if (_searchQuery.isEmpty) return true;
-          final data = item.data() as Map<String, dynamic>;
-          final name = data['name']?.toString().toLowerCase() ?? '';
-          final description = data['description']?.toString().toLowerCase() ?? '';
-          final category = data['categoryId']?.toString().toLowerCase() ?? '';
-
-          return name.contains(_searchQuery) ||
-              description.contains(_searchQuery) ||
-              category.contains(_searchQuery);
-        }).toList();
-
-        // Categorize items
-        Map<String, List<QueryDocumentSnapshot>> categorizedItems = {};
-        for (var item in filteredItems) {
-          final category = item['categoryId']?.toString() ?? 'Others';
-          if (!categorizedItems.containsKey(category)) {
-            categorizedItems[category] = [];
-            // Initialize category as expanded by default
-            if (!_expandedCategories.containsKey(category)) {
-              _expandedCategories[category] = true;
-            }
-          }
-          categorizedItems[category]!.add(item);
-        }
-
-        return CustomScrollView(
-          controller: _scrollController,
-          slivers: [
-            // Expand/Collapse all button
-            if (categorizedItems.length > 1)
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Row(
-                    children: [
-                      TextButton.icon(
-                        onPressed: () {
-                          setState(() {
-                            final allExpanded = _expandedCategories.values.every((expanded) => expanded);
-                            _expandedCategories.updateAll((key, value) => !allExpanded);
-                          });
-                        },
-                        icon: Icon(
-                          _expandedCategories.values.every((expanded) => expanded)
-                              ? Icons.expand_less
-                              : Icons.expand_more,
-                          size: 20,
+                Row(
+                  children: [
+                    Container(
+                      padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.green,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Icon(
+                        Icons.circle,
+                        color: Colors.white,
+                        size: 8,
+                      ),
+                    ),
+                    if (isPopular) ...[
+                      SizedBox(width: 8),
+                      Container(
+                        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: accentColor,
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        label: Text(
-                          _expandedCategories.values.every((expanded) => expanded)
-                              ? 'Collapse All'
-                              : 'Expand All',
-                          style: TextStyle(fontSize: 14),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.trending_up, color: Colors.white, size: 12),
+                            SizedBox(width: 2),
+                            Text(
+                              'Bestseller',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
+                  ],
+                ),
+                SizedBox(height: 8),
+                Text(
+                  name,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[800],
                   ),
+                ),
+                SizedBox(height: 4),
+                Row(
+                  children: [
+                    Icon(Icons.star, color: Colors.amber, size: 14),
+                    SizedBox(width: 4),
+                    Text(
+                      rating.toString(),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                    if (estimatedTime.isNotEmpty) ...[
+                      SizedBox(width: 12),
+                      Icon(Icons.access_time, color: Colors.grey[500], size: 14),
+                      SizedBox(width: 4),
+                      Text(
+                        '$estimatedTime mins',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[500],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'QAR ${price.toStringAsFixed(2)}',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: primaryColor,
+                  ),
+                ),
+                if (description.isNotEmpty) ...[
+                  SizedBox(height: 8),
+                  Text(
+                    description,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey[600],
+                      height: 1.3,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ],
+            ),
+          ),
+
+          SizedBox(width: 16),
+
+          Column(
+            children: [
+              Container(
+                width: 120,
+                height: 100,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 8,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: imageUrl != null && imageUrl.isNotEmpty
+                      ? Image.network(
+                    imageUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) =>
+                        _buildImagePlaceholder(),
+                  )
+                      : _buildImagePlaceholder(),
                 ),
               ),
+              SizedBox(height: 12),
+              quantityInCart > 0
+                  ? _buildQuantitySelector(item, quantityInCart)
+                  : _buildAddButton(item),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 
-            // Categories
-            ...categorizedItems.entries.map((entry) {
-              final categoryName = entry.key;
-              final categoryItems = entry.value;
-              final isExpanded = _expandedCategories[categoryName] ?? true;
+  Widget _buildImagePlaceholder() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            primaryColor.withOpacity(0.1),
+            primaryColor.withOpacity(0.05),
+          ],
+        ),
+      ),
+      child: Center(
+        child: Icon(
+          Icons.restaurant_menu,
+          color: primaryColor.withOpacity(0.6),
+          size: 40,
+        ),
+      ),
+    );
+  }
 
-              return SliverToBoxAdapter(
-                child: Container(
-                  margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 4,
-                        offset: Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    children: [
-                      // Category header
-                      GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _expandedCategories[categoryName] = !isExpanded;
-                          });
-                        },
-                        child: Container(
-                          padding: EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: primaryColor.withOpacity(0.1),
-                            borderRadius: BorderRadius.vertical(
-                              top: Radius.circular(12),
-                              bottom: isExpanded ? Radius.zero : Radius.circular(12),
-                            ),
-                          ),
-                          child: Row(
-                            children: [
-                              Text(
-                                categoryName,
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: primaryColor,
-                                ),
-                              ),
-                              Spacer(),
-                              Container(
-                                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: primaryColor.withOpacity(0.2),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  '${categoryItems.length}',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                    color: primaryColor,
-                                  ),
-                                ),
-                              ),
-                              SizedBox(width: 8),
-                              Icon(
-                                isExpanded ? Icons.expand_less : Icons.expand_more,
-                                color: primaryColor,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-
-                      // Category items
-                      if (isExpanded)
-                        Padding(
-                          padding: EdgeInsets.all(8),
-                          child: GridView.builder(
-                            shrinkWrap: true,
-                            physics: NeverScrollableScrollPhysics(),
-                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 2,
-                              childAspectRatio: 0.85,
-                              crossAxisSpacing: 8,
-                              mainAxisSpacing: 8,
-                            ),
-                            itemCount: categoryItems.length,
-                            itemBuilder: (context, index) {
-                              final item = categoryItems[index];
-                              final itemData = item.data() as Map<String, dynamic>;
-                              return _buildCleanMenuItemCard(item, itemData);
-                            },
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              );
-            }).toList(),
-
-            // Bottom padding
-            SliverToBoxAdapter(
-              child: SizedBox(height: 100),
+  Widget _buildAddButton(QueryDocumentSnapshot item) {
+    return GestureDetector(
+      onTap: () => _showCustomizationSheet(item),
+      child: Container(
+        width: 100,
+        padding: EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: primaryColor, width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: primaryColor.withOpacity(0.1),
+              blurRadius: 4,
+              offset: Offset(0, 2),
             ),
           ],
+        ),
+        child: Text(
+          'ADD',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: primaryColor,
+            fontWeight: FontWeight.bold,
+            fontSize: 14,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuantitySelector(QueryDocumentSnapshot item, int quantity) {
+    return Container(
+      width: 100,
+      decoration: BoxDecoration(
+        color: primaryColor,
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: primaryColor.withOpacity(0.3),
+            blurRadius: 4,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: GestureDetector(
+              onTap: () => _updateCartQuantity(item, -1),
+              child: Container(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Icon(Icons.remove, color: Colors.white, size: 18),
+              ),
+            ),
+          ),
+          Container(
+            padding: EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+            child: Text(
+              quantity.toString(),
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+            ),
+          ),
+          Expanded(
+            child: GestureDetector(
+              onTap: () => _updateCartQuantity(item, 1),
+              child: Container(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Icon(Icons.add, color: Colors.white, size: 18),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showCustomizationSheet(QueryDocumentSnapshot item) {
+    final itemData = item.data() as Map<String, dynamic>;
+    String selectedSpiceLevel = 'Mild';
+    Map<String, bool> selectedAddons = {
+      'Extra Cheese': false,
+      'Extra Sauce': false,
+      'Extra Vegetables': false,
+    };
+    Map<String, double> addonPrices = {
+      'Extra Cheese': 1.50,
+      'Extra Sauce': 0.75,
+      'Extra Vegetables': 2.00,
+    };
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(20),
+              topRight: Radius.circular(20),
+            ),
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Customize ${itemData['name']}',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: Icon(Icons.close),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 20),
+
+                Text(
+                  'Spice Level',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                ),
+                SizedBox(height: 10),
+                Row(
+                  children: [
+                    _buildSpiceLevelOption('Mild', Icons.local_fire_department,
+                        selectedSpiceLevel, (level) => setSheetState(() => selectedSpiceLevel = level)),
+                    _buildSpiceLevelOption('Medium', Icons.local_fire_department,
+                        selectedSpiceLevel, (level) => setSheetState(() => selectedSpiceLevel = level)),
+                    _buildSpiceLevelOption('Spicy', Icons.local_fire_department,
+                        selectedSpiceLevel, (level) => setSheetState(() => selectedSpiceLevel = level)),
+                  ],
+                ),
+
+                SizedBox(height: 20),
+
+                Text(
+                  'Add-ons',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                ),
+                SizedBox(height: 10),
+                ...selectedAddons.keys.map((addon) =>
+                    _buildAddonOption(addon, addonPrices[addon]!,
+                        selectedAddons[addon]!,
+                            (value) => setSheetState(() => selectedAddons[addon] = value!))),
+
+                SizedBox(height: 20),
+
+                TextField(
+                  decoration: InputDecoration(
+                    labelText: 'Special Instructions',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    hintText: 'Any special requests...',
+                  ),
+                  maxLines: 3,
+                ),
+
+                SizedBox(height: 20),
+
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      _addToCart(item);
+                      Navigator.pop(context);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: primaryColor,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      'Add to Cart • QAR ${_calculateItemPrice(itemData['price'], selectedAddons, addonPrices).toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSpiceLevelOption(String level, IconData icon, String selectedLevel, Function(String) onTap) {
+    final isSelected = selectedLevel == level;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => onTap(level),
+        child: Container(
+          margin: EdgeInsets.only(right: 8),
+          padding: EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: isSelected ? primaryColor : Colors.grey[300]!,
+              width: isSelected ? 2 : 1,
+            ),
+            borderRadius: BorderRadius.circular(8),
+            color: isSelected ? primaryColor.withOpacity(0.1) : Colors.transparent,
+          ),
+          child: Column(
+            children: [
+              Icon(
+                  icon,
+                  color: isSelected ? primaryColor : Colors.orange,
+                  size: 20
+              ),
+              SizedBox(height: 4),
+              Text(
+                  level,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: isSelected ? primaryColor : Colors.grey[700],
+                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                  )
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAddonOption(String name, double price, bool isSelected, Function(bool?) onChanged) {
+    return Container(
+      margin: EdgeInsets.only(bottom: 8),
+      padding: EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: isSelected ? primaryColor : Colors.grey[300]!,
+          width: isSelected ? 2 : 1,
+        ),
+        borderRadius: BorderRadius.circular(8),
+        color: isSelected ? primaryColor.withOpacity(0.05) : Colors.transparent,
+      ),
+      child: Row(
+        children: [
+          Checkbox(
+            value: isSelected,
+            onChanged: onChanged,
+            activeColor: primaryColor,
+          ),
+          Expanded(
+            child: Text(
+              name,
+              style: TextStyle(
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+              ),
+            ),
+          ),
+          Text(
+            '+QAR ${price.toStringAsFixed(2)}',
+            style: TextStyle(
+              fontWeight: FontWeight.w500,
+              color: primaryColor,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  double _calculateItemPrice(num basePrice, Map<String, bool> addons, Map<String, double> prices) {
+    double total = basePrice.toDouble();
+    addons.forEach((addon, selected) {
+      if (selected && prices.containsKey(addon)) {
+        total += prices[addon]!;
+      }
+    });
+    return total;
+  }
+
+  Widget _buildFloatingCartButton() {
+    return AnimatedBuilder(
+      animation: _cartSlideAnimation,
+      builder: (context, child) {
+        return Transform.scale(
+          scale: _cartSlideAnimation.value,
+          child: GestureDetector(
+            onTap: _showCartBottomSheet,
+            child: Container(
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              decoration: BoxDecoration(
+                color: primaryColor,
+                borderRadius: BorderRadius.circular(30),
+                boxShadow: [
+                  BoxShadow(
+                    color: primaryColor.withOpacity(0.4),
+                    blurRadius: 15,
+                    offset: Offset(0, 5),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.shopping_cart, color: Colors.white, size: 20),
+                  SizedBox(width: 8),
+                  Text(
+                    '${_cartItems.length} item${_cartItems.length != 1 ? 's' : ''}',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(width: 16),
+                  Text(
+                    'QAR ${_totalAmount.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  Icon(Icons.arrow_upward, color: Colors.white, size: 16),
+                ],
+              ),
+            ),
+          ),
         );
       },
     );
   }
 
-  Widget _buildCleanMenuItemCard(QueryDocumentSnapshot item, Map<String, dynamic> itemData) {
-    final name = itemData['name']?.toString() ?? 'Unknown Item';
-    final price = (itemData['price'] as num?)?.toDouble() ?? 0.0;
-    final imageUrl = itemData['imageUrl']?.toString();
-    final isPopular = itemData['isPopular'] ?? false;
-
-    final quantityInCart = _cartItems
-        .where((cartItem) => cartItem['id'] == item.id)
-        .fold(0, (sum, cartItem) => sum + (cartItem['quantity'] as int));
-
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: InkWell(
-        onTap: () => _showItemCustomizationDialog(item),
-        borderRadius: BorderRadius.circular(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Image section
-            Expanded(
-              flex: 3,
-              child: Container(
-                width: double.infinity,
-                child: Stack(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-                      child: Container(
-                        width: double.infinity,
-                        height: double.infinity,
-                        child: imageUrl != null && imageUrl.isNotEmpty
-                            ? Image.network(
-                          imageUrl,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
-                        )
-                            : _buildPlaceholder(),
-                      ),
-                    ),
-
-                    // Badges
-                    if (isPopular)
-                      Positioned(
-                        top: 6,
-                        right: 6,
-                        child: Container(
-                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: warningColor,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text('🔥', style: TextStyle(fontSize: 10)),
-                        ),
-                      ),
-
-                    if (quantityInCart > 0)
-                      Positioned(
-                        top: 6,
-                        left: 6,
-                        child: Container(
-                          padding: EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: successColor,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Text(
-                            '$quantityInCart',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 10,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-
-            // Content section
-            Expanded(
-              flex: 2,
-              child: Padding(
-                padding: EdgeInsets.all(8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      name,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-
-                    Spacer(),
-
-                    Row(
-                      children: [
-                        Text(
-                          '\$${price.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: primaryColor,
-                            fontSize: 14,
-                          ),
-                        ),
-
-                        Spacer(),
-
-                        // Quick add button
-                        Container(
-                          width: 28,
-                          height: 28,
-                          decoration: BoxDecoration(
-                            color: primaryColor,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              onTap: () => _quickAddToCart(item),
-                              borderRadius: BorderRadius.circular(6),
-                              child: Icon(
-                                Icons.add,
-                                size: 16,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPlaceholder() {
-    return Container(
-      width: double.infinity,
-      height: double.infinity,
-      color: primaryColor.withOpacity(0.1),
-      child: Icon(Icons.restaurant_menu, color: primaryColor, size: 32),
-    );
-  }
-
-  Widget _buildMinimalBottomBar() {
+  Widget _buildCartBottomBar() {
     if (_cartItems.isEmpty) return SizedBox.shrink();
 
+    final subtotal = _totalAmount;
+    final grandTotal = subtotal; // Simplified - no additional fees
+
     return Container(
-      padding: EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.1),
-            blurRadius: 8,
-            offset: Offset(0, -2),
+            blurRadius: 20,
+            offset: Offset(0, -5),
           ),
         ],
-      ),
-      child: SafeArea(
-        child: Row(
-          children: [
-            // Clear cart button
-            OutlinedButton(
-              onPressed: _clearCart,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.red,
-                side: BorderSide(color: Colors.red),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(25),
-                ),
-              ),
-              child: Text('Clear'),
-            ),
-
-            SizedBox(width: 12),
-
-            // Submit order button
-            Expanded(
-              child: ElevatedButton(
-                onPressed: _isSubmitting ? null : _submitTakeawayOrder,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: primaryColor,
-                  foregroundColor: Colors.white,
-                  padding: EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(25),
-                  ),
-                ),
-                child: _isSubmitting
-                    ? SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    color: Colors.white,
-                    strokeWidth: 2,
-                  ),
-                )
-                    : Text(
-                  'Submit Order (\$${_totalAmount.toStringAsFixed(2)})',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
-          ],
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(20),
+          topRight: Radius.circular(20),
         ),
       ),
-    );
-  }
-
-  // Show customization dialog
-  void _showItemCustomizationDialog(QueryDocumentSnapshot item) {
-    final itemData = item.data() as Map<String, dynamic>;
-    final name = itemData['name']?.toString() ?? 'Unknown Item';
-    final price = (itemData['price'] as num?)?.toDouble() ?? 0.0;
-    final description = itemData['description']?.toString() ?? '';
-
-    final TextEditingController customNotesController = TextEditingController();
-    String selectedSize = 'Regular';
-    List<String> selectedAddons = [];
-    int quantity = 1;
-
-    showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text(
-            name,
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (description.isNotEmpty)
-                  Padding(
-                    padding: EdgeInsets.only(bottom: 16),
-                    child: Text(
-                      description,
-                      style: TextStyle(color: Colors.grey[600]),
-                    ),
-                  ),
-
-                Text(
-                  'Price: \$${price.toStringAsFixed(2)}',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: primaryColor,
-                    fontSize: 16,
-                  ),
-                ),
-                SizedBox(height: 16),
-
-                // Quantity selector
-                Text('Quantity:', style: TextStyle(fontWeight: FontWeight.w600)),
-                SizedBox(height: 8),
-                Row(
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            GestureDetector(
+              onTap: () {
+                setState(() {
+                  _showSubtotalDetails = !_showSubtotalDetails;
+                });
+                if (_showSubtotalDetails) {
+                  _subtotalAnimationController.forward();
+                } else {
+                  _subtotalAnimationController.reverse();
+                }
+                HapticFeedback.selectionClick();
+              },
+              child: Container(
+                padding: EdgeInsets.all(20),
+                child: Row(
                   children: [
-                    IconButton(
-                      onPressed: quantity > 1
-                          ? () => setDialogState(() => quantity--)
-                          : null,
-                      icon: Icon(Icons.remove_circle_outline),
-                    ),
-                    Container(
-                      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey[300]!),
-                        borderRadius: BorderRadius.circular(8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Total: QAR ${grandTotal.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: primaryColor,
+                            ),
+                          ),
+                          Text(
+                            '${_cartItems.length} item${_cartItems.length != 1 ? 's' : ''} • Tap for details',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
                       ),
-                      child: Text(
-                        quantity.toString(),
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
                     ),
-                    IconButton(
-                      onPressed: () => setDialogState(() => quantity++),
-                      icon: Icon(Icons.add_circle_outline),
+                    Icon(
+                      _showSubtotalDetails
+                          ? Icons.keyboard_arrow_up
+                          : Icons.keyboard_arrow_down,
+                      color: primaryColor,
                     ),
                   ],
                 ),
-                SizedBox(height: 16),
-
-                // Size options
-                Text('Size:', style: TextStyle(fontWeight: FontWeight.w600)),
-                SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  children: ['Small', 'Regular', 'Large'].map((size) {
-                    return ChoiceChip(
-                      label: Text(size),
-                      selected: selectedSize == size,
-                      onSelected: (selected) {
-                        if (selected) {
-                          setDialogState(() => selectedSize = size);
-                        }
-                      },
-                    );
-                  }).toList(),
-                ),
-                SizedBox(height: 16),
-
-                // Add-ons
-                Text('Add-ons:', style: TextStyle(fontWeight: FontWeight.w600)),
-                SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  children: ['Extra Cheese', 'Extra Sauce', 'Spicy', 'No Onions'].map((addon) {
-                    return FilterChip(
-                      label: Text(addon),
-                      selected: selectedAddons.contains(addon),
-                      onSelected: (selected) {
-                        setDialogState(() {
-                          if (selected) {
-                            selectedAddons.add(addon);
-                          } else {
-                            selectedAddons.remove(addon);
-                          }
-                        });
-                      },
-                    );
-                  }).toList(),
-                ),
-                SizedBox(height: 16),
-
-                // Custom notes
-                Text('Custom Notes:', style: TextStyle(fontWeight: FontWeight.w600)),
-                SizedBox(height: 8),
-                TextField(
-                  controller: customNotesController,
-                  decoration: InputDecoration(
-                    hintText: 'Any special instructions...',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
-                  maxLines: 3,
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                _addCustomizedToCart(
-                  item,
-                  quantity: quantity,
-                  size: selectedSize,
-                  addons: selectedAddons,
-                  notes: customNotesController.text,
-                );
-                Navigator.pop(context);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: primaryColor,
-                foregroundColor: Colors.white,
               ),
-              child: Text('Add to Cart'),
+            ),
+
+            // Simplified bill details
+            AnimatedBuilder(
+              animation: _subtotalSlideAnimation,
+              builder: (context, child) {
+                return ClipRect(
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    heightFactor: _subtotalSlideAnimation.value,
+                    child: Container(
+                      padding: EdgeInsets.fromLTRB(20, 0, 20, 10),
+                      child: Container(
+                        padding: EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[50],
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Column(
+                          children: [
+                            _buildBillRow('Subtotal', subtotal),
+                            Divider(color: Colors.grey[300]),
+                            _buildBillRow('Total', grandTotal, isTotal: true),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+
+            Padding(
+              padding: EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  GestureDetector(
+                    onTap: _showCustomerDetailsBottomSheet,
+                    child: Container(
+                      padding: EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[50],
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey[200]!),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.person_outline, color: primaryColor),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              _customerNameController.text.isEmpty
+                                  ? 'Add customer details'
+                                  : _customerNameController.text,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: _customerNameController.text.isEmpty
+                                    ? Colors.grey[600]
+                                    : Colors.grey[800],
+                              ),
+                            ),
+                          ),
+                          Icon(Icons.arrow_forward_ios,
+                              color: Colors.grey[400], size: 16),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  SizedBox(height: 16),
+
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _isSubmitting ? null : _validateAndSubmitOrder,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: primaryColor,
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 0,
+                      ),
+                      child: _isSubmitting
+                          ? SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                          : Text(
+                        'Place Order • QAR ${grandTotal.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -6632,78 +7239,470 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
     );
   }
 
-  // Quick add to cart (without customization)
-  void _quickAddToCart(QueryDocumentSnapshot item) {
+  Widget _buildBillRow(String label, double amount, {bool isTotal = false}) {
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: isTotal ? 16 : 14,
+              fontWeight: isTotal ? FontWeight.bold : FontWeight.w500,
+              color: isTotal ? Colors.grey[800] : Colors.grey[600],
+            ),
+          ),
+          Text(
+            'QAR ${amount.toStringAsFixed(2)}',
+            style: TextStyle(
+              fontSize: isTotal ? 16 : 14,
+              fontWeight: isTotal ? FontWeight.bold : FontWeight.w500,
+              color: isTotal ? primaryColor : Colors.grey[800],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return Container(
+      height: 300,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(color: primaryColor),
+            SizedBox(height: 16),
+            Text(
+              'Loading delicious food...',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey[600],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorState(String message) {
+    return Container(
+      height: 300,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, size: 64, color: Colors.red[300]),
+            SizedBox(height: 16),
+            Text(
+              message,
+              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+              textAlign: TextAlign.center,
+            ),
+            SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () => setState(() {}),
+              child: Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Container(
+      height: 300,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.restaurant_menu, size: 80, color: Colors.grey[300]),
+            SizedBox(height: 16),
+            Text(
+              'No Menu Available',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[700],
+              ),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Menu items will appear here',
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey[500],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNoResultsState() {
+    return Container(
+      height: 300,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.search_off, size: 80, color: Colors.grey[300]),
+            SizedBox(height: 16),
+            Text(
+              'No Results Found',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[700],
+              ),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Try different keywords or filters',
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey[500],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _addToCart(QueryDocumentSnapshot item) {
     setState(() {
       final itemData = item.data() as Map<String, dynamic>;
       final existingIndex = _cartItems.indexWhere(
-            (cartItem) => cartItem['id'] == item.id &&
-            (cartItem['customizations'] == null || cartItem['customizations'].isEmpty),
+            (cartItem) => cartItem['id'] == item.id,
       );
 
       if (existingIndex >= 0) {
-        _cartItems[existingIndex]['quantity'] += 1;
+        int currentQuantity = (_cartItems[existingIndex]['quantity'] as num).toInt();
+        _cartItems[existingIndex]['quantity'] = currentQuantity + 1;
       } else {
         _cartItems.add({
           'id': item.id,
           'name': itemData['name']?.toString() ?? 'Unknown Item',
           'price': (itemData['price'] as num?)?.toDouble() ?? 0.0,
           'quantity': 1,
-          'customizations': {},
         });
+      }
+      _calculateTotal();
+
+      if (_cartItems.length == 1) {
+        _cartAnimationController.forward();
+      }
+    });
+
+    HapticFeedback.mediumImpact();
+  }
+
+  void _updateCartQuantity(QueryDocumentSnapshot item, int change) {
+    setState(() {
+      final existingIndex = _cartItems.indexWhere(
+            (cartItem) => cartItem['id'] == item.id,
+      );
+
+      if (existingIndex >= 0) {
+        int currentQuantity = (_cartItems[existingIndex]['quantity'] as num).toInt();
+        int newQuantity = currentQuantity + change;
+
+        if (newQuantity <= 0) {
+          _cartItems.removeAt(existingIndex);
+          if (_cartItems.isEmpty) {
+            _cartAnimationController.reverse();
+            _showSubtotalDetails = false;
+            _subtotalAnimationController.reset();
+          }
+        } else {
+          _cartItems[existingIndex]['quantity'] = newQuantity;
+        }
       }
       _calculateTotal();
     });
 
-    if (_cartItems.length == 1) {
-      setState(() => _isCustomerInfoCollapsed = true);
-    }
-  }
-
-  // Add customized item to cart
-  void _addCustomizedToCart(
-      QueryDocumentSnapshot item, {
-        required int quantity,
-        required String size,
-        required List<String> addons,
-        required String notes,
-      }) {
-    setState(() {
-      final itemData = item.data() as Map<String, dynamic>;
-      final customizations = {
-        'size': size,
-        'addons': addons,
-        'notes': notes,
-      };
-
-      // Always add as new item for customized orders
-      _cartItems.add({
-        'id': item.id,
-        'name': itemData['name']?.toString() ?? 'Unknown Item',
-        'price': (itemData['price'] as num?)?.toDouble() ?? 0.0,
-        'quantity': quantity,
-        'customizations': customizations,
-      });
-      _calculateTotal();
-    });
-
-    if (_cartItems.length == 1) {
-      setState(() => _isCustomerInfoCollapsed = true);
-    }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Added to cart with customizations!'),
-        backgroundColor: successColor,
-        duration: Duration(seconds: 2),
-      ),
-    );
+    HapticFeedback.selectionClick();
   }
 
   void _calculateTotal() {
     _totalAmount = _cartItems.fold(0.0, (sum, item) {
-      return sum + (item['price'] * item['quantity']);
+      final double price = (item['price'] as num).toDouble();
+      final int quantity = (item['quantity'] as num).toInt();
+      return sum + (price * quantity.toDouble());
     });
+  }
+
+  void _showCartBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => DraggableScrollableSheet(
+          initialChildSize: 0.7,
+          maxChildSize: 0.9,
+          minChildSize: 0.5,
+          builder: (context, scrollController) => Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(20),
+                topRight: Radius.circular(20),
+              ),
+            ),
+            child: Column(
+              children: [
+                Container(
+                  margin: EdgeInsets.symmetric(vertical: 12),
+                  width: 50,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 20),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Your Order',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          _clearCart();
+                          Navigator.pop(context);
+                        },
+                        child: Text(
+                          'Clear Cart',
+                          style: TextStyle(color: Colors.red),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView.builder(
+                    controller: scrollController,
+                    padding: EdgeInsets.symmetric(horizontal: 20),
+                    itemCount: _cartItems.length,
+                    itemBuilder: (context, index) {
+                      final item = _cartItems[index];
+                      return _buildCartItem(item, index, setModalState);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCartItem(Map<String, dynamic> item, int index, StateSetter setModalState) {
+    return Container(
+      margin: EdgeInsets.only(bottom: 16),
+      padding: EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item['name'],
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 16,
+                  ),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  'QAR ${(item['price'] as num).toDouble().toStringAsFixed(2)}',
+                  style: TextStyle(
+                    color: primaryColor,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Row(
+            children: [
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    int currentQuantity = (item['quantity'] as num).toInt();
+                    if (currentQuantity > 1) {
+                      item['quantity'] = currentQuantity - 1;
+                    } else {
+                      _cartItems.removeAt(index);
+                    }
+                    _calculateTotal();
+                  });
+                  setModalState(() {}); // Update modal state
+                },
+                child: Container(
+                  padding: EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.remove, size: 16),
+                ),
+              ),
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  (item['quantity'] as num).toInt().toString(),
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    int currentQuantity = (item['quantity'] as num).toInt();
+                    item['quantity'] = currentQuantity + 1;
+                    _calculateTotal();
+                  });
+                  setModalState(() {}); // Update modal state
+                },
+                child: Container(
+                  padding: EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: primaryColor,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.add, color: Colors.white, size: 16),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showCustomerDetailsBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => Container(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+        ),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(20),
+            topRight: Radius.circular(20),
+          ),
+        ),
+        child: Padding(
+          padding: EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Customer Details',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: Icon(Icons.close),
+                  ),
+                ],
+              ),
+              SizedBox(height: 20),
+              TextField(
+                controller: _customerNameController,
+                decoration: InputDecoration(
+                  labelText: 'Full Name *',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  prefixIcon: Icon(Icons.person),
+                ),
+              ),
+              SizedBox(height: 16),
+              TextField(
+                controller: _customerPhoneController,
+                decoration: InputDecoration(
+                  labelText: 'Phone Number *',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  prefixIcon: Icon(Icons.phone),
+                ),
+                keyboardType: TextInputType.phone,
+              ),
+              SizedBox(height: 16),
+              TextField(
+                controller: _specialInstructionsController,
+                decoration: InputDecoration(
+                  labelText: 'Special Instructions (Optional)',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  prefixIcon: Icon(Icons.note),
+                ),
+                maxLines: 2,
+              ),
+              SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryColor,
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Text(
+                    'Save Details',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _clearCart() {
@@ -6711,7 +7710,7 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Clear Cart'),
-        content: Text('Remove all items from cart?'),
+        content: Text('Are you sure you want to remove all items?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -6722,7 +7721,10 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
               setState(() {
                 _cartItems.clear();
                 _totalAmount = 0.0;
+                _showSubtotalDetails = false;
               });
+              _cartAnimationController.reverse();
+              _subtotalAnimationController.reset();
               Navigator.pop(context);
             },
             child: Text('Clear', style: TextStyle(color: Colors.red)),
@@ -6732,22 +7734,21 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
     );
   }
 
-  Future<void> _submitTakeawayOrder() async {
+  Future<void> _validateAndSubmitOrder() async {
     if (_customerNameController.text.trim().isEmpty) {
-      _showErrorSnackBar('Please enter customer name');
+      _showErrorMessage('Please enter customer name');
       return;
     }
 
     if (_customerPhoneController.text.trim().isEmpty) {
-      _showErrorSnackBar('Please enter phone number');
+      _showErrorMessage('Please enter phone number');
       return;
     }
 
-    if (_orderType == 'curbside' && _vehicleInfoController.text.trim().isEmpty) {
-      _showErrorSnackBar('Please enter vehicle information for curbside service');
-      return;
-    }
+    await _submitOrder();
+  }
 
+  Future<void> _submitOrder() async {
     setState(() => _isSubmitting = true);
 
     try {
@@ -6759,34 +7760,40 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
           .get();
 
       final dailyOrderNumber = ordersToday.size + 1;
+      final subtotal = _totalAmount;
+      final grandTotal = subtotal; // No additional fees
 
       await _firestore.collection('Orders').add({
-        'order_type': 'external',
+        'Order_type': 'takeaway',
         'service_type': _orderType,
         'payment_method': _paymentMethod,
         'customerName': _customerNameController.text.trim(),
         'customerPhone': _customerPhoneController.text.trim(),
-        'vehicleInfo': _vehicleInfoController.text.trim(),
         'specialInstructions': _specialInstructionsController.text.trim(),
-        'estimatedWaitTime': _waitTimeController.text.trim(),
         'items': _cartItems,
-        'subtotal': _totalAmount,
-        'totalAmount': _totalAmount,
+        'subtotal': subtotal,
+        'totalAmount': grandTotal,
         'status': 'pending',
         'timestamp': Timestamp.now(),
         'dailyOrderNumber': dailyOrderNumber,
         'branchId': 'Old_Airport',
         'orderTime': DateFormat('HH:mm').format(now),
-        'waiterName': 'Outdoor Staff',
+        'estimatedReadyTime': _calculateEstimatedTime(),
       });
 
       _showSuccessDialog();
-      _clearFormAfterSubmit();
+      _clearFormData();
 
     } catch (e) {
       setState(() => _isSubmitting = false);
-      _showErrorSnackBar('Error submitting order: $e');
+      _showErrorMessage('Failed to place order: $e');
     }
+  }
+
+  String _calculateEstimatedTime() {
+    final now = DateTime.now();
+    final estimatedTime = now.add(Duration(minutes: 15));
+    return DateFormat('HH:mm').format(estimatedTime);
   }
 
   void _showSuccessDialog() {
@@ -6794,63 +7801,90 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: Row(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: Column(
           children: [
-            Icon(Icons.check_circle, color: successColor),
-            SizedBox(width: 8),
-            Text('Order Submitted!'),
+            Container(
+              padding: EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: successColor.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.check_circle,
+                color: successColor,
+                size: 48,
+              ),
+            ),
+            SizedBox(height: 16),
+            Text(
+              'Order Placed Successfully!',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ],
         ),
-        content: Text('The order has been sent to the kitchen successfully.'),
+        content: Text(
+          'Your takeaway order has been confirmed and will be ready for pickup soon. You\'ll receive updates on your phone.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.grey[600]),
+        ),
         actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              setState(() => _isSubmitting = false);
-            },
-            child: Text('Continue Taking Orders'),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                setState(() => _isSubmitting = false);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: primaryColor,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: Text('Continue Ordering'),
+            ),
           ),
         ],
       ),
     );
   }
 
-  void _showErrorSnackBar(String message) {
+  void _showErrorMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
         backgroundColor: Colors.red,
         behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
         margin: EdgeInsets.all(16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
     );
   }
 
-  void _clearFormAfterSubmit() {
+  void _clearFormData() {
     setState(() {
       _cartItems.clear();
       _totalAmount = 0.0;
+      _showSubtotalDetails = false;
       _customerNameController.clear();
       _customerPhoneController.clear();
-      _vehicleInfoController.clear();
       _specialInstructionsController.clear();
-      _waitTimeController.clear();
-      _isCustomerInfoCollapsed = true;
     });
-  }
-
-  @override
-  void dispose() {
-    _customerNameController.dispose();
-    _customerPhoneController.dispose();
-    _vehicleInfoController.dispose();
-    _specialInstructionsController.dispose();
-    _waitTimeController.dispose();
-    _searchController.dispose();
-    _scrollController.dispose();
-    super.dispose();
+    _cartAnimationController.reverse();
+    _subtotalAnimationController.reset();
   }
 }
+
+
 
 
