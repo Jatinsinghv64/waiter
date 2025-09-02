@@ -2103,7 +2103,6 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
-
   void _showTableInfo() {
     showDialog(
       context: context,
