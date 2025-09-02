@@ -1967,6 +1967,12 @@ class _OrderScreenState extends State<OrderScreen> {
 
   @override
   Widget build(BuildContext context) {
+    bool timerEnabled = _tableStatus == 'occupied' || _tableStatus == 'ordered';
+    bool seatOccupied = timerEnabled;
+    Duration timerValue = _elapsed;
+
+    String formatTimer(Duration duration) => _formatDuration(duration);
+
     return Scaffold(
       appBar: AppBar(
         title: Column(
@@ -1980,30 +1986,45 @@ class _OrderScreenState extends State<OrderScreen> {
                 fontWeight: FontWeight.bold,
                 fontSize: 18,
               ),
+              overflow: TextOverflow.ellipsis,
             ),
             Row(
               children: [
-                Text(
-                  'Status: ${_getStatusDisplayText(_tableStatus)}',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w400,
-                    color: _getStatusColor(_tableStatus),
-                  ),
-                ),
-                SizedBox(width: 16),
-                if (_tableStatus == 'occupied' || _tableStatus == 'ordered') ...[
-                  Icon(Icons.timer, size: 16, color: Colors.white),
-                  SizedBox(width: 4),
-                  Text(
-                    _formatDuration(_elapsed),
+                Expanded(
+                  child: Text(
+                    'Status: ${_getStatusDisplayText(_tableStatus)}',
                     style: TextStyle(
                       fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.white,
+                      fontWeight: FontWeight.w400,
+                      color: _getStatusColor(_tableStatus),
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                ),
+                if (timerEnabled)
+                  Padding(
+                    padding: EdgeInsets.only(left: 8),
+                    child: Row(
+                      children: [
+                        Icon(Icons.timer, size: 16, color: Colors.white),
+                        SizedBox(width: 4),
+                        Text(
+                          formatTimer(timerValue),
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
+                if (seatOccupied)
+                  Padding(
+                    padding: EdgeInsets.only(left: 8),
+                    child: Icon(Icons.event_seat, color: Colors.green),
+                  ),
               ],
             ),
           ],
@@ -2014,17 +2035,13 @@ class _OrderScreenState extends State<OrderScreen> {
           Container(
             margin: EdgeInsets.only(right: 8),
             child: _isToggling
-                ? Container(
-              width: 40,
-              height: 40,
-              child: Center(
-                child: SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    color: Colors.white,
-                    strokeWidth: 2,
-                  ),
+                ? Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2,
                 ),
               ),
             )
@@ -2062,8 +2079,7 @@ class _OrderScreenState extends State<OrderScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (_cartItems.isEmpty && !widget.isAddingToExisting)
-                    _buildEmptyCart(),
+                  if (_cartItems.isEmpty && !widget.isAddingToExisting) _buildEmptyCart(),
                   _buildSearchBar(),
                   Padding(
                     padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
@@ -2086,6 +2102,7 @@ class _OrderScreenState extends State<OrderScreen> {
       bottomNavigationBar: _buildBottomNavigationBar(),
     );
   }
+
 
   void _showTableInfo() {
     showDialog(
@@ -3039,34 +3056,29 @@ class _OrderScreenState extends State<OrderScreen> {
 
 
 
-
-
-
 class ActiveOrdersScreen extends StatefulWidget {
   @override
   _ActiveOrdersScreenState createState() => _ActiveOrdersScreenState();
 }
-
-class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTickerProviderStateMixin {
+class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
+    with SingleTickerProviderStateMixin {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final Color primaryColor = Color(0xFF1976D2);
   final Color secondaryColor = Color(0xFFE3F2FD);
-
   late TabController _tabController;
-  String _selectedOrderType = 'all';
-
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
+    _tabController.addListener(() {
+      setState(() {}); // update UI on tab changes
+    });
   }
-
   @override
   void dispose() {
     _tabController.dispose();
     super.dispose();
   }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -3074,116 +3086,43 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
         backgroundColor: Colors.white,
         elevation: 0,
         title: Text(
-            "Active Orders",
-            style: TextStyle(
-                color: Colors.black87,
-                fontWeight: FontWeight.bold,
-                fontSize: 20
-            )
+          "Active Orders",
+          style: TextStyle(
+            color: Colors.black87,
+            fontWeight: FontWeight.bold,
+            fontSize: 20,
+          ),
         ),
         centerTitle: true,
         bottom: PreferredSize(
-          preferredSize: Size.fromHeight(60),
+          preferredSize: Size.fromHeight(72),
           child: Container(
             color: Colors.white,
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Container(
-              decoration: BoxDecoration(
-                color: Color(0xFFF0F6FF),
-                borderRadius: BorderRadius.circular(12),
-              ),
+              height: 70,
               child: TabBar(
                 controller: _tabController,
-                isScrollable: true, // Changed to true to handle overflow
-                indicator: BoxDecoration(
-                  color: primaryColor,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                indicatorSize: TabBarIndicatorSize.tab,
-                labelColor: Colors.white,
-                unselectedLabelColor: primaryColor,
-                labelStyle: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                    height: 1.2
-                ),
-                unselectedLabelStyle: TextStyle(
-                    fontWeight: FontWeight.w500,
-                    fontSize: 14,
-                    height: 1.2
-                ),
+                isScrollable: false,
+                indicatorColor: primaryColor,
+                indicatorWeight: 3,
+                indicatorSize: TabBarIndicatorSize.label, // fix underline width to label size
+                indicatorPadding: EdgeInsets.zero, // remove horizontal padding to fix error
+                labelColor: primaryColor,
+                unselectedLabelColor: Colors.grey[600],
+                labelStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                unselectedLabelStyle: TextStyle(fontWeight: FontWeight.normal, fontSize: 13),
                 tabs: [
-                  Tab(
-                    child: Container(
-                      constraints: BoxConstraints(minWidth: 60),
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.restaurant, size: 18),
-                            SizedBox(width: 4),
-                            Text('All'),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  Tab(
-                    child: Container(
-                      constraints: BoxConstraints(minWidth: 70),
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.table_restaurant, size: 18),
-                            SizedBox(width: 4),
-                            Text('Dine In'),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  Tab(
-                    child: Container(
-                      constraints: BoxConstraints(minWidth: 85),
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.shopping_bag, size: 18),
-                            SizedBox(width: 4),
-                            Text('Takeaway'),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  Tab(
-                    child: Container(
-                      constraints: BoxConstraints(minWidth: 90),
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.check_circle_outline, size: 18),
-                            SizedBox(width: 4),
-                            Text('Completed'),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
+                  _buildTabItem(Icons.restaurant_menu, 'All', 0),
+                  _buildTabItem(Icons.table_restaurant, 'Dine In', 1),
+                  _buildTabItem(Icons.shopping_bag, 'Takeaway', 2),
+                  _buildTabItem(Icons.check_circle, 'Completed', 3),
                 ],
               ),
             ),
           ),
         ),
       ),
-
       body: TabBarView(
         controller: _tabController,
         children: [
@@ -3195,22 +3134,31 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
       ),
     );
   }
-
-
-
-  Widget _buildTabIcon(IconData icon, String text) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Icon(icon, size: 18),
-        SizedBox(width: 4),
-        Flexible(child: Text(text, style: TextStyle(fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis),
-        ),
-      ],
+  Widget _buildTabItem(IconData icon, String text, int index) {
+    final bool isSelected = _tabController.index == index;
+    return Tab(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            icon,
+            size: 22,
+            color: isSelected ? primaryColor : Colors.grey[600],
+          ),
+          SizedBox(height: 4),
+          Text(
+            text,
+            style: TextStyle(
+              color: isSelected ? primaryColor : Colors.grey[600],
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
     );
   }
-
   Widget _buildOrdersList(String orderType) {
     return StreamBuilder<QuerySnapshot>(
       stream: _getOrdersStream(orderType),
@@ -3218,21 +3166,20 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
         if (snapshot.hasError) {
           return _buildErrorState(snapshot.error.toString());
         }
-
-        if (snapshot.connectionState == ConnectionState.waiting || !snapshot.hasData) {
+        if (snapshot.connectionState == ConnectionState.waiting ||
+            !snapshot.hasData) {
           return _buildLoadingState();
         }
-
         final orders = snapshot.data!.docs;
-
         if (orders.isEmpty) {
           return _buildEmptyState(orderType);
         }
-
-        final pendingOrders = orders.where((order) => order['status'] == 'pending').toList();
-        final preparingOrders = orders.where((order) => order['status'] == 'preparing').toList();
-        final preparedOrders = orders.where((order) => order['status'] == 'prepared').toList();
-
+        final pendingOrders =
+        orders.where((order) => order['status'] == 'pending').toList();
+        final preparingOrders =
+        orders.where((order) => order['status'] == 'preparing').toList();
+        final preparedOrders =
+        orders.where((order) => order['status'] == 'prepared').toList();
         return RefreshIndicator(
           onRefresh: () async {
             setState(() {});
@@ -3241,15 +3188,21 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
           child: ListView(
             padding: EdgeInsets.all(16),
             children: [
-              _buildSummaryCards(pendingOrders.length, preparingOrders.length, preparedOrders.length),
+              _buildSummaryCards(
+                pendingOrders.length,
+                preparingOrders.length,
+                preparedOrders.length,
+              ),
               SizedBox(height: 20),
               if (preparedOrders.isNotEmpty) ...[
-                _buildSectionHeader('Ready to Serve', preparedOrders.length, Colors.green),
+                _buildSectionHeader(
+                    'Ready to Serve', preparedOrders.length, Colors.green),
                 ...preparedOrders.map((order) => _buildOrderCard(order, true)),
                 SizedBox(height: 16),
               ],
               if (preparingOrders.isNotEmpty) ...[
-                _buildSectionHeader('Preparing', preparingOrders.length, Colors.orange),
+                _buildSectionHeader(
+                    'Preparing', preparingOrders.length, Colors.orange),
                 ...preparingOrders.map((order) => _buildOrderCard(order, false)),
                 SizedBox(height: 16),
               ],
@@ -3263,7 +3216,6 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
       },
     );
   }
-
   Stream<QuerySnapshot> _getOrdersStream(String orderType) {
     try {
       Query query = _firestore
@@ -3278,19 +3230,23 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
       return Stream.empty();
     }
   }
-
   Widget _buildSummaryCards(int pending, int preparing, int prepared) {
     return Row(
       children: [
-        Expanded(child: _buildSummaryCard('New', pending, Colors.red, Icons.fiber_new)),
+        Expanded(
+          child: _buildSummaryCard('New', pending, Colors.red, Icons.fiber_new),
+        ),
         SizedBox(width: 12),
-        Expanded(child: _buildSummaryCard('Preparing', preparing, Colors.orange, Icons.restaurant)),
+        Expanded(
+          child: _buildSummaryCard('Preparing', preparing, Colors.orange, Icons.restaurant),
+        ),
         SizedBox(width: 12),
-        Expanded(child: _buildSummaryCard('Ready', prepared, Colors.green, Icons.check_circle)),
+        Expanded(
+          child: _buildSummaryCard('Ready', prepared, Colors.green, Icons.check_circle),
+        ),
       ],
     );
   }
-
   Widget _buildSummaryCard(String title, int count, Color color, IconData icon) {
     return Container(
       padding: EdgeInsets.all(16),
@@ -3303,13 +3259,15 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
         children: [
           Icon(icon, color: color, size: 24),
           SizedBox(height: 8),
-          Text(count.toString(), style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: color)),
+          Text(
+            count.toString(),
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: color),
+          ),
           Text(title, style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.w500)),
         ],
       ),
     );
   }
-
   Widget _buildSectionHeader(String title, int count, Color color) {
     return Container(
       margin: EdgeInsets.only(bottom: 12),
@@ -3321,20 +3279,24 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
       ),
       child: Row(
         children: [
-          Container(width: 4, height: 20, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
+          Container(
+            width: 4,
+            height: 20,
+            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2)),
+          ),
           SizedBox(width: 12),
           Text(title, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color)),
           Spacer(),
           Container(
             padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
-            child: Text(count.toString(), style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+            child: Text(count.toString(),
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
           ),
         ],
       ),
     );
   }
-
   Widget _buildOrderCard(QueryDocumentSnapshot order, bool isPriority) {
     final orderData = order.data() as Map<String, dynamic>;
     final orderType = orderData['Order_type']?.toString() ?? 'dine_in';
@@ -3346,27 +3308,30 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
     final timestamp = orderData['timestamp'] as Timestamp?;
     final items = List<Map<String, dynamic>>.from(orderData['items'] ?? []);
     final statusColor = _getFirestoreStatusColor(status);
-
     return Material(
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () {
-          // Inside your list/card tap handler:
           Navigator.push(
             context,
             MaterialPageRoute(
               builder: (_) => OrderDetailScreen(order: order),
             ),
           );
-
         },
         child: Container(
           margin: EdgeInsets.only(bottom: 12),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(12),
-            boxShadow: [BoxShadow(color: isPriority ? Colors.green.withOpacity(0.2) : Colors.black12, blurRadius: isPriority ? 8 : 4, offset: Offset(0, isPriority ? 4 : 2))],
+            boxShadow: [
+              BoxShadow(
+                color: isPriority ? Colors.green.withOpacity(0.2) : Colors.black12,
+                blurRadius: isPriority ? 8 : 4,
+                offset: Offset(0, isPriority ? 4 : 2),
+              )
+            ],
             border: isPriority ? Border.all(color: Colors.green, width: 2) : null,
           ),
           child: Padding(
@@ -3382,8 +3347,11 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
                         color: orderType == 'takeaway' ? Colors.orange : Colors.blue,
                         borderRadius: BorderRadius.circular(8),
                       ),
-                      child: Icon(orderType == 'takeaway' ? Icons.shopping_bag : Icons.table_restaurant,
-                          color: orderType == 'takeaway' ? Colors.orange : Colors.blue, size: 20),
+                      child: Icon(
+                        orderType == 'takeaway' ? Icons.shopping_bag : Icons.table_restaurant,
+                        color: orderType == 'takeaway' ? Colors.orange : Colors.blue,
+                        size: 20,
+                      ),
                     ),
                     SizedBox(width: 12),
                     Expanded(
@@ -3392,33 +3360,45 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
                         children: [
                           Row(
                             children: [
-                              Text('Order #$dailyOrderNumber',
-                                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: primaryColor)),
+                              Text(
+                                'Order #$dailyOrderNumber',
+                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: primaryColor),
+                              ),
                               if (isPriority) ...[
                                 SizedBox(width: 8),
                                 Container(
                                   padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(color: Colors.green, borderRadius: BorderRadius.circular(4)),
-                                  child: Text('READY',
-                                      style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                  decoration: BoxDecoration(
+                                    color: Colors.green,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    'READY',
+                                    style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                  ),
                                 ),
                               ],
                             ],
                           ),
                           SizedBox(height: 4),
-                          Text(orderType == 'takeaway'
-                              ? (customerName != null ? 'Customer: $customerName' : 'Takeaway Order')
-                              : 'Table: ${tableNumber ?? 'N/A'}', style: TextStyle(fontSize: 14, color: Colors.grey)),
+                          Text(
+                            orderType == 'takeaway'
+                                ? (customerName != null ? 'Customer: $customerName' : 'Takeaway Order')
+                                : 'Table: ${tableNumber ?? 'N/A'}',
+                            style: TextStyle(fontSize: 14, color: Colors.grey),
+                          ),
                         ],
                       ),
                     ),
                     Container(
                       padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
-                          color: statusColor.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: statusColor, width: 1)),
-                      child: Text(status.toUpperCase(), style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.bold)),
+                        color: statusColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: statusColor, width: 1),
+                      ),
+                      child: Text(status.toUpperCase(),
+                          style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.bold)),
                     ),
                   ],
                 ),
@@ -3437,7 +3417,8 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
                       ]),
                       SizedBox(height: 4),
                       Text(
-                        items.take(2).map((item) => '${item['name']} (${item['quantity']})').join(', ') + (items.length > 2 ? '...' : ''),
+                        items.take(2).map((item) => '${item['name']} (${item['quantity']})').join(', ') +
+                            (items.length > 2 ? '...' : ''),
                         style: TextStyle(fontSize: 13, color: Colors.black87),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -3452,10 +3433,11 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
                     Row(children: [
                       Icon(Icons.access_time, size: 16, color: Colors.grey),
                       SizedBox(width: 4),
-                      Text(timestamp != null ? _formatTime(timestamp.toDate()) : 'Unknown', style: TextStyle(fontSize: 12, color: Colors.grey))
+                      Text(timestamp != null ? _formatTime(timestamp.toDate()) : 'Unknown',
+                          style: TextStyle(fontSize: 12, color: Colors.grey)),
                     ]),
                     Text('\$${totalAmount.toStringAsFixed(2)}',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: primaryColor))
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: primaryColor)),
                   ],
                 )
               ],
@@ -3465,18 +3447,26 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
       ),
     );
   }
-
   Widget _buildEmptyState(String orderType) {
     String message;
     IconData icon;
-
     switch (orderType) {
-      case 'dine_in': message = 'No active dine-in orders'; icon = Icons.table_restaurant; break;
-      case 'takeaway': message = 'No active takeaway orders'; icon = Icons.shopping_bag; break;
-      case 'completed': message = 'No completed orders for today'; icon = Icons.check_circle_outline; break;
-      default: message = 'No active orders'; icon = Icons.restaurant;
+      case 'dine_in':
+        message = 'No active dine-in orders';
+        icon = Icons.table_restaurant;
+        break;
+      case 'takeaway':
+        message = 'No active takeaway orders';
+        icon = Icons.shopping_bag;
+        break;
+      case 'completed':
+        message = 'No completed orders for today';
+        icon = Icons.check_circle_outline;
+        break;
+      default:
+        message = 'No active orders';
+        icon = Icons.restaurant;
     }
-
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -3492,7 +3482,6 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
       ),
     );
   }
-
   Widget _buildErrorState(String error) {
     return Center(
       child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -3506,7 +3495,6 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
       ]),
     );
   }
-
   Widget _buildLoadingState() {
     return Center(
       child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -3516,20 +3504,21 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
       ]),
     );
   }
-
   Color _getFirestoreStatusColor(String status) {
     switch (status.toLowerCase()) {
-      case 'prepared': return Colors.green;
-      case 'preparing': return Colors.orange;
-      case 'pending': return Colors.red;
-      default: return Colors.grey;
+      case 'prepared':
+        return Colors.green;
+      case 'preparing':
+        return Colors.orange;
+      case 'pending':
+        return Colors.red;
+      default:
+        return Colors.grey;
     }
   }
-
   String _formatTime(DateTime dateTime) {
     final now = DateTime.now();
     final diff = now.difference(dateTime);
-
     if (diff.inMinutes < 60) {
       return '${diff.inMinutes}m ago';
     } else if (diff.inHours < 24) {
@@ -3538,11 +3527,9 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
       return '${dateTime.day}/${dateTime.month}';
     }
   }
-
   Widget _buildCompletedOrdersList() {
     final now = DateTime.now();
     final startOfDay = DateTime(now.year, now.month, now.day);
-
     return StreamBuilder<QuerySnapshot>(
       stream: _firestore
           .collection('Orders')
@@ -3558,12 +3545,10 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
         if (!snapshot.hasData) {
           return Center(child: CircularProgressIndicator());
         }
-
         final orders = snapshot.data!.docs;
         if (orders.isEmpty) {
           return _buildEmptyState('completed');
         }
-
         return ListView.builder(
           padding: EdgeInsets.all(16),
           itemCount: orders.length,
@@ -3576,17 +3561,14 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
             final paymentMethod = orderData['paymentMethod']?.toString() ?? 'N/A';
             final paymentTime = orderData['paymentTime'] as Timestamp?;
             final items = List<Map<String, dynamic>>.from(orderData['items'] ?? []);
-
             return GestureDetector(
               onTap: () {
-                // Inside your list/card tap handler:
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => OrderDetailScreen(order: order),
                   ),
                 );
-
               },
               child: Card(
                 margin: EdgeInsets.only(bottom: 16),
@@ -3611,7 +3593,8 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
                       Row(
                         children: [
                           Chip(
-                            label: Text(orderType, style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                            label: Text(orderType,
+                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
                             backgroundColor: orderType == 'takeaway' ? Colors.orange : Colors.blue,
                             visualDensity: VisualDensity.compact,
                           ),
@@ -3629,10 +3612,14 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
                         style: TextStyle(fontSize: 14, color: Colors.grey),
                       ),
                       Divider(height: 24, thickness: 1.5, color: secondaryColor),
-                      ...items.take(2).map((item) => Padding(
-                          padding: EdgeInsets.only(bottom: 2),
-                          child: Text('${item['name']} x${item['quantity']}', style: TextStyle(fontSize: 14, color: Colors.black87))),
-                      ),
+                      ...items
+                          .take(2)
+                          .map((item) => Padding(
+                        padding: EdgeInsets.only(bottom: 2),
+                        child: Text('${item['name']} x${item['quantity']}',
+                            style: TextStyle(fontSize: 14, color: Colors.black87)),
+                      ))
+                          .toList(),
                       if (items.length > 2)
                         Text('+ ${items.length - 2} more...', style: TextStyle(fontSize: 13, color: Colors.grey)),
                       SizedBox(height: 10),
@@ -3654,12 +3641,19 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTick
       },
     );
   }
-
   String _formatDateTime(DateTime dt) {
     return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')} '
         '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 }
+// Dummy placeholder for OrderDetailScreen to avoid error
+
+
+// Dummy placeholder for OrderDetailScreen to avoid error
+
+
+
+
 
 
 
@@ -7503,8 +7497,37 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen>
                       ),
                       TextButton(
                         onPressed: () {
-                          _clearCart();
-                          Navigator.pop(context);
+                          // Show confirmation dialog
+                          showDialog(
+                            context: context,
+                            builder: (dialogContext) => AlertDialog(
+                              title: Text('Clear Cart'),
+                              content: Text('Are you sure you want to remove all items?'),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(dialogContext),
+                                  child: Text('Cancel'),
+                                ),
+                                TextButton(
+                                  onPressed: () {
+                                    // Update main widget state
+                                    setState(() {
+                                      _cartItems.clear();
+                                      _totalAmount = 0.0;
+                                      _showSubtotalDetails = false;
+                                    });
+                                    _cartAnimationController.reverse();
+                                    _subtotalAnimationController.reset();
+
+                                    // Close dialog and bottom sheet
+                                    Navigator.pop(dialogContext); // Close dialog
+                                    Navigator.pop(context); // Close bottom sheet
+                                  },
+                                  child: Text('Clear', style: TextStyle(color: Colors.red)),
+                                ),
+                              ],
+                            ),
+                          );
                         },
                         child: Text(
                           'Clear Cart',
@@ -7515,7 +7538,26 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen>
                   ),
                 ),
                 Expanded(
-                  child: ListView.builder(
+                  child: _cartItems.isEmpty
+                      ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.shopping_cart_outlined,
+                            size: 64,
+                            color: Colors.grey[300]),
+                        SizedBox(height: 16),
+                        Text(
+                          'Your cart is empty',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                      : ListView.builder(
                     controller: scrollController,
                     padding: EdgeInsets.symmetric(horizontal: 20),
                     itemCount: _cartItems.length,
