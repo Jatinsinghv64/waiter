@@ -1680,7 +1680,7 @@ class TableStatusInfo {
 
 // Placeholder for OrderScreen - replace with your actual implementation
 
-// Order Screen - Improved Previous Design
+
 class OrderScreen extends StatefulWidget {
   final String tableNumber;
   final Map<String, dynamic> tableData;
@@ -1713,6 +1713,10 @@ class _OrderScreenState extends State<OrderScreen> {
   StreamSubscription? _tableStatusSubscription;
   bool _isToggling = false;
 
+  Timer? _timer;
+  Duration _elapsed = Duration.zero;
+  DateTime? _occupiedTime;
+
   @override
   void initState() {
     super.initState();
@@ -1724,7 +1728,8 @@ class _OrderScreenState extends State<OrderScreen> {
 
     _listenToTableStatus();
 
-    // Add listener for search functionality
+    _startOrResetTimer();
+
     _searchController.addListener(() {
       setState(() {
         _searchQuery = _searchController.text.toLowerCase();
@@ -1736,6 +1741,7 @@ class _OrderScreenState extends State<OrderScreen> {
   void dispose() {
     _searchController.dispose();
     _tableStatusSubscription?.cancel();
+    _timer?.cancel();
     super.dispose();
   }
 
@@ -1751,14 +1757,58 @@ class _OrderScreenState extends State<OrderScreen> {
         if (tables != null && tables.containsKey(widget.tableNumber)) {
           final tableData = tables[widget.tableNumber] as Map<String, dynamic>;
           final newStatus = tableData['status']?.toString() ?? 'available';
+
           if (mounted) {
             setState(() {
               _tableStatus = newStatus;
+              _startOrResetTimer();
+
+              // Capture the time when table became occupied or ordered
+              if (_tableStatus == 'occupied' || _tableStatus == 'ordered') {
+                final Timestamp? ts = tableData['statusTimestamp'];
+                if (ts != null) {
+                  _occupiedTime = ts.toDate();
+                } else if (_occupiedTime == null) {
+                  _occupiedTime = DateTime.now();
+                }
+              } else {
+                _occupiedTime = null;
+              }
             });
           }
         }
       }
     });
+  }
+
+  void _startOrResetTimer() {
+    _timer?.cancel();
+
+    if (_tableStatus == 'occupied' || _tableStatus == 'ordered') {
+      _occupiedTime ??= DateTime.now();
+
+      _timer = Timer.periodic(Duration(seconds: 1), (_) {
+        final now = DateTime.now();
+        setState(() {
+          _elapsed = now.difference(_occupiedTime!);
+        });
+      });
+    } else {
+      _occupiedTime = null;
+      _elapsed = Duration.zero;
+      setState(() {});
+    }
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    final seconds = duration.inSeconds.remainder(60);
+    if (hours > 0) {
+      return "${twoDigits(hours)}:${twoDigits(minutes)}:${twoDigits(seconds)}";
+    }
+    return "${twoDigits(minutes)}:${twoDigits(seconds)}";
   }
 
   String _getStatusDisplayText(String status) {
@@ -1794,9 +1844,10 @@ class _OrderScreenState extends State<OrderScreen> {
 
     try {
       if (_tableStatus == 'available') {
-        // Mark as occupied
+        // Mark as occupied with timestamp
         await _firestore.collection('Branch').doc('Old_Airport').update({
           'Tables.${widget.tableNumber}.status': 'occupied',
+          'Tables.${widget.tableNumber}.statusTimestamp': Timestamp.now(),
         });
 
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1808,7 +1859,7 @@ class _OrderScreenState extends State<OrderScreen> {
           ),
         );
       } else {
-        // Mark as available (with confirmation for occupied/ordered tables)
+        // Mark as available (confirm for occupied or ordered)
         if (_tableStatus == 'occupied' || _tableStatus == 'ordered') {
           _showMarkAvailableDialog();
         }
@@ -1865,17 +1916,16 @@ class _OrderScreenState extends State<OrderScreen> {
         );
       },
     ).then((_) {
-      // Reset toggling state if dialog is dismissed
       setState(() => _isToggling = false);
     });
   }
 
   Future<void> _markTableAvailable() async {
     try {
-      // Update table status in Firestore
       await _firestore.collection('Branch').doc('Old_Airport').update({
         'Tables.${widget.tableNumber}.status': 'available',
         'Tables.${widget.tableNumber}.currentOrderId': FieldValue.delete(),
+        'Tables.${widget.tableNumber}.statusTimestamp': FieldValue.delete(),
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1885,7 +1935,6 @@ class _OrderScreenState extends State<OrderScreen> {
           behavior: SnackBarBehavior.floating,
         ),
       );
-
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1894,8 +1943,6 @@ class _OrderScreenState extends State<OrderScreen> {
           behavior: SnackBarBehavior.floating,
         ),
       );
-    } finally {
-      setState(() => _isToggling = false);
     }
   }
 
@@ -1934,20 +1981,36 @@ class _OrderScreenState extends State<OrderScreen> {
                 fontSize: 18,
               ),
             ),
-            Text(
-              'Status: ${_getStatusDisplayText(_tableStatus)}',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w400,
-                color: _getStatusColor(_tableStatus),
-              ),
+            Row(
+              children: [
+                Text(
+                  'Status: ${_getStatusDisplayText(_tableStatus)}',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                    color: _getStatusColor(_tableStatus),
+                  ),
+                ),
+                SizedBox(width: 16),
+                if (_tableStatus == 'occupied' || _tableStatus == 'ordered') ...[
+                  Icon(Icons.timer, size: 16, color: Colors.white),
+                  SizedBox(width: 4),
+                  Text(
+                    _formatDuration(_elapsed),
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ],
         ),
         backgroundColor: primaryColor,
         foregroundColor: Colors.white,
         actions: [
-          // Toggle Button for Table Availability
           Container(
             margin: EdgeInsets.only(right: 8),
             child: _isToggling
@@ -1975,7 +2038,6 @@ class _OrderScreenState extends State<OrderScreen> {
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
           ),
-          // Additional info button
           IconButton(
             icon: Icon(Icons.info_outline),
             onPressed: () => _showTableInfo(),
@@ -1993,24 +2055,16 @@ class _OrderScreenState extends State<OrderScreen> {
         ),
         child: Column(
           children: [
-            // Existing Order Items (if adding to existing order)
             if (widget.isAddingToExisting && _existingOrderItems.isNotEmpty)
               _buildExistingOrderSection(),
-
-            // Current Cart Section
             if (_cartItems.isNotEmpty) _buildCartSection(),
-
-            // Menu Section
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (_cartItems.isEmpty && !widget.isAddingToExisting)
                     _buildEmptyCart(),
-
-                  // Search Bar Section
                   _buildSearchBar(),
-
                   Padding(
                     padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
                     child: Text(
@@ -2022,9 +2076,7 @@ class _OrderScreenState extends State<OrderScreen> {
                       ),
                     ),
                   ),
-                  Expanded(
-                    child: _buildMenuList(),
-                  ),
+                  Expanded(child: _buildMenuList()),
                 ],
               ),
             ),
@@ -2051,14 +2103,20 @@ class _OrderScreenState extends State<OrderScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildInfoRow('Status', _getStatusDisplayText(_tableStatus), _getStatusColor(_tableStatus)),
+              _buildInfoRow(
+                  'Status', _getStatusDisplayText(_tableStatus), _getStatusColor(_tableStatus)),
               SizedBox(height: 8),
-              _buildInfoRow('Current Order', _existingOrderItems.isNotEmpty ? 'Yes' : 'No', null),
+              _buildInfoRow('Current Order',
+                  _existingOrderItems.isNotEmpty ? 'Yes' : 'No', null),
               SizedBox(height: 8),
               _buildInfoRow('Items in Cart', '${_cartItems.length}', null),
               if (_totalAmount > 0) ...[
                 SizedBox(height: 8),
                 _buildInfoRow('Cart Total', '\$${_totalAmount.toStringAsFixed(2)}', null),
+              ],
+              if (_tableStatus == 'occupied' || _tableStatus == 'ordered') ...[
+                SizedBox(height: 8),
+                _buildInfoRow('Occupied Time', _formatDuration(_elapsed), null),
               ],
             ],
           ),
@@ -2250,7 +2308,6 @@ class _OrderScreenState extends State<OrderScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        // Item name and price
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -2273,12 +2330,9 @@ class _OrderScreenState extends State<OrderScreen> {
                             ),
                           ],
                         ),
-
-                        // Centered quantity controls: - 1 +
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            // Remove button (-)
                             GestureDetector(
                               onTap: () => _updateQuantity(index, -1),
                               child: Container(
@@ -2292,10 +2346,9 @@ class _OrderScreenState extends State<OrderScreen> {
                               ),
                             ),
                             SizedBox(width: 12),
-
-                            // Quantity number
                             Container(
-                              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              padding:
+                              EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                               decoration: BoxDecoration(
                                 color: primaryColor.withOpacity(0.1),
                                 borderRadius: BorderRadius.circular(8),
@@ -2310,8 +2363,6 @@ class _OrderScreenState extends State<OrderScreen> {
                               ),
                             ),
                             SizedBox(width: 12),
-
-                            // Add button (+)
                             GestureDetector(
                               onTap: () => _updateQuantity(index, 1),
                               child: Container(
@@ -2385,13 +2436,13 @@ class _OrderScreenState extends State<OrderScreen> {
 
         final menuItems = snapshot.data!.docs;
 
-        // Filter menu items based on search query
         final filteredItems = menuItems.where((item) {
           if (_searchQuery.isEmpty) return true;
 
           final itemData = item.data() as Map<String, dynamic>;
           final name = itemData['name']?.toString().toLowerCase() ?? '';
-          final description = itemData['description']?.toString().toLowerCase() ?? '';
+          final description =
+              itemData['description']?.toString().toLowerCase() ?? '';
 
           return name.contains(_searchQuery) || description.contains(_searchQuery);
         }).toList();
@@ -2475,7 +2526,8 @@ class _OrderScreenState extends State<OrderScreen> {
                     if (isPopular) ...[
                       SizedBox(width: 8),
                       Container(
-                        padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding:
+                        EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
                           color: Colors.amber,
                           borderRadius: BorderRadius.circular(4),
@@ -2584,7 +2636,6 @@ class _OrderScreenState extends State<OrderScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Submit Order Button (for new items)
           if (_cartItems.isNotEmpty)
             Row(
               children: [
@@ -2593,7 +2644,9 @@ class _OrderScreenState extends State<OrderScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        widget.isAddingToExisting ? 'Additional Total' : 'Total Amount',
+                        widget.isAddingToExisting
+                            ? 'Additional Total'
+                            : 'Total Amount',
                         style: TextStyle(
                           fontSize: 14,
                           color: Colors.grey[600],
@@ -2644,8 +2697,6 @@ class _OrderScreenState extends State<OrderScreen> {
                 ),
               ],
             ),
-
-          // Checkout Button - Show when table is ordered/occupied
           if (_tableStatus == 'ordered' || _tableStatus == 'occupied')
             Padding(
               padding: EdgeInsets.only(top: _cartItems.isNotEmpty ? 12 : 0),
@@ -2686,8 +2737,8 @@ class _OrderScreenState extends State<OrderScreen> {
   void _addToCart(QueryDocumentSnapshot item) {
     setState(() {
       final itemData = item.data() as Map<String, dynamic>;
-      final existingIndex = _cartItems.indexWhere(
-              (cartItem) => cartItem['id'] == item.id);
+      final existingIndex =
+      _cartItems.indexWhere((cartItem) => cartItem['id'] == item.id);
 
       if (existingIndex >= 0) {
         _cartItems[existingIndex]['quantity'] += 1;
@@ -2736,7 +2787,6 @@ class _OrderScreenState extends State<OrderScreen> {
         await _createNewOrder();
       }
 
-      // Update local table status after successful order submission
       setState(() {
         _tableStatus = 'ordered';
       });
@@ -2751,12 +2801,10 @@ class _OrderScreenState extends State<OrderScreen> {
         ),
       );
 
-      // Clear cart but stay on the screen
       setState(() {
         _cartItems.clear();
         _totalAmount = 0.0;
       });
-
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -2778,7 +2826,6 @@ class _OrderScreenState extends State<OrderScreen> {
 
     final dailyOrderNumber = ordersToday.size + 1;
 
-    // Create order document
     final orderRef = await _firestore.collection('Orders').add({
       'Order_type': 'dine_in',
       'tableNumber': widget.tableNumber,
@@ -2791,15 +2838,14 @@ class _OrderScreenState extends State<OrderScreen> {
       'branchId': 'Old_Airport',
     });
 
-    // Update table status
     await _firestore.collection('Branch').doc('Old_Airport').update({
       'Tables.${widget.tableNumber}.status': 'ordered',
       'Tables.${widget.tableNumber}.currentOrderId': orderRef.id,
+      'Tables.${widget.tableNumber}.statusTimestamp': Timestamp.now(),
     });
   }
 
   Future<void> _addToExistingOrder() async {
-    // Get current order
     final orderDoc = await _firestore
         .collection('Orders')
         .doc(widget.existingOrderId)
@@ -2811,18 +2857,16 @@ class _OrderScreenState extends State<OrderScreen> {
       final currentTotal = (orderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
       final currentSubtotal = (orderData['subtotal'] as num?)?.toDouble() ?? 0.0;
 
-      // Merge with new items
       final mergedItems = _mergeOrderItems(currentItems, _cartItems);
       final newTotal = currentTotal + _totalAmount;
       final newSubtotal = currentSubtotal + _totalAmount;
 
-      // Update order
       await _firestore.collection('Orders').doc(widget.existingOrderId).update({
         'items': mergedItems,
         'subtotal': newSubtotal,
         'totalAmount': newTotal,
-        'status': 'pending', // Reset to pending if it was prepared
-        'timestamp': Timestamp.now(), // Update timestamp
+        'status': 'pending',
+        'timestamp': Timestamp.now(),
       });
     }
   }
@@ -2830,7 +2874,6 @@ class _OrderScreenState extends State<OrderScreen> {
   List<Map<String, dynamic>> _mergeOrderItems(
       List<Map<String, dynamic>> existingItems,
       List<Map<String, dynamic>> newItems) {
-
     final merged = List<Map<String, dynamic>>.from(existingItems);
 
     for (final newItem in newItems) {
@@ -2876,7 +2919,6 @@ class _OrderScreenState extends State<OrderScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  // Cash Payment
                   Expanded(
                     child: GestureDetector(
                       onTap: () => _processPayment('cash'),
@@ -2904,7 +2946,6 @@ class _OrderScreenState extends State<OrderScreen> {
                     ),
                   ),
                   SizedBox(width: 16),
-                  // Card Payment
                   Expanded(
                     child: GestureDetector(
                       onTap: () => _processPayment('card'),
@@ -2946,11 +2987,10 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   Future<void> _processPayment(String paymentMethod) async {
-    Navigator.pop(context); // Close the payment options dialog
+    Navigator.pop(context);
     setState(() => _isCheckingOut = true);
 
     try {
-      // Get the current order total
       final orderDoc = await _firestore
           .collection('Orders')
           .doc(widget.existingOrderId ?? widget.tableData['currentOrderId'])
@@ -2960,7 +3000,6 @@ class _OrderScreenState extends State<OrderScreen> {
         final orderData = orderDoc.data() as Map<String, dynamic>;
         final totalAmount = (orderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
 
-        // Update order status to paid
         await _firestore.collection('Orders').doc(widget.existingOrderId ?? widget.tableData['currentOrderId']).update({
           'status': 'paid',
           'paymentMethod': paymentMethod,
@@ -2968,10 +3007,10 @@ class _OrderScreenState extends State<OrderScreen> {
           'paidAmount': totalAmount,
         });
 
-        // Clear the table
         await _firestore.collection('Branch').doc('Old_Airport').update({
           'Tables.${widget.tableNumber}.status': 'available',
           'Tables.${widget.tableNumber}.currentOrderId': FieldValue.delete(),
+          'Tables.${widget.tableNumber}.statusTimestamp': FieldValue.delete(),
         });
 
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2982,7 +3021,6 @@ class _OrderScreenState extends State<OrderScreen> {
           ),
         );
 
-        // Navigate back to tables screen
         Navigator.pop(context);
       }
     } catch (e) {
@@ -3003,13 +3041,13 @@ class _OrderScreenState extends State<OrderScreen> {
 
 
 
+
 class ActiveOrdersScreen extends StatefulWidget {
   @override
   _ActiveOrdersScreenState createState() => _ActiveOrdersScreenState();
 }
 
-class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
-    with SingleTickerProviderStateMixin {
+class _ActiveOrdersScreenState extends State<ActiveOrdersScreen> with SingleTickerProviderStateMixin {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final Color primaryColor = Color(0xFF1976D2);
   final Color secondaryColor = Color(0xFFE3F2FD);
@@ -3020,7 +3058,7 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
   }
 
   @override
@@ -3032,81 +3070,144 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50],
       appBar: AppBar(
         backgroundColor: Colors.white,
-        elevation: 4,
+        elevation: 0,
         title: Text(
-          "Active Orders",
-          style: TextStyle(
-            color: Colors.black87,
-            fontWeight: FontWeight.bold,
-          ),
+            "Active Orders",
+            style: TextStyle(
+                color: Colors.black87,
+                fontWeight: FontWeight.bold,
+                fontSize: 20
+            )
         ),
         centerTitle: true,
-        bottom: TabBar(
-          controller: _tabController,
-          onTap: (index) {
-            setState(() {
-              switch (index) {
-                case 0:
-                  _selectedOrderType = 'all';
-                  break;
-                case 1:
-                  _selectedOrderType = 'dine_in';
-                  break;
-                case 2:
-                  _selectedOrderType = 'takeaway';
-                  break;
-              }
-            });
-          },
-          labelColor: primaryColor,
-          unselectedLabelColor: Colors.grey[600],
-          indicatorColor: primaryColor,
-          indicatorWeight: 3,
-          tabs: [
-            Tab(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.restaurant, size: 18),
-                  SizedBox(width: 8),
-                  Text('All Orders', style: TextStyle(fontWeight: FontWeight.w600)),
+        bottom: PreferredSize(
+          preferredSize: Size.fromHeight(60),
+          child: Container(
+            color: Colors.white,
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Color(0xFFF0F6FF),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: TabBar(
+                controller: _tabController,
+                isScrollable: true, // Changed to true to handle overflow
+                indicator: BoxDecoration(
+                  color: primaryColor,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                indicatorSize: TabBarIndicatorSize.tab,
+                labelColor: Colors.white,
+                unselectedLabelColor: primaryColor,
+                labelStyle: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    height: 1.2
+                ),
+                unselectedLabelStyle: TextStyle(
+                    fontWeight: FontWeight.w500,
+                    fontSize: 14,
+                    height: 1.2
+                ),
+                tabs: [
+                  Tab(
+                    child: Container(
+                      constraints: BoxConstraints(minWidth: 60),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.restaurant, size: 18),
+                            SizedBox(width: 4),
+                            Text('All'),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Tab(
+                    child: Container(
+                      constraints: BoxConstraints(minWidth: 70),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.table_restaurant, size: 18),
+                            SizedBox(width: 4),
+                            Text('Dine In'),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Tab(
+                    child: Container(
+                      constraints: BoxConstraints(minWidth: 85),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.shopping_bag, size: 18),
+                            SizedBox(width: 4),
+                            Text('Takeaway'),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Tab(
+                    child: Container(
+                      constraints: BoxConstraints(minWidth: 90),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.check_circle_outline, size: 18),
+                            SizedBox(width: 4),
+                            Text('Completed'),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
-            Tab(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.table_restaurant, size: 18),
-                  SizedBox(width: 8),
-                  Text('Dine In', style: TextStyle(fontWeight: FontWeight.w600)),
-                ],
-              ),
-            ),
-            Tab(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.shopping_bag, size: 18),
-                  SizedBox(width: 8),
-                  Text('Takeaway', style: TextStyle(fontWeight: FontWeight.w600)),
-                ],
-              ),
-            ),
-          ],
+          ),
         ),
       ),
+
       body: TabBarView(
         controller: _tabController,
         children: [
           _buildOrdersList('all'),
           _buildOrdersList('dine_in'),
           _buildOrdersList('takeaway'),
+          _buildCompletedOrdersList(),
         ],
       ),
+    );
+  }
+
+
+
+  Widget _buildTabIcon(IconData icon, String text) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Icon(icon, size: 18),
+        SizedBox(width: 4),
+        Flexible(child: Text(text, style: TextStyle(fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis),
+        ),
+      ],
     );
   }
 
@@ -3115,62 +3216,11 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
       stream: _getOrdersStream(orderType),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          print('Firestore error: ${snapshot.error}');
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.error_outline, size: 64, color: Colors.red[300]),
-                SizedBox(height: 16),
-                Text(
-                  'Error loading orders',
-                  style: TextStyle(fontSize: 18, color: Colors.red[600]),
-                ),
-                SizedBox(height: 8),
-                Text(
-                  'Please check your connection',
-                  style: TextStyle(color: Colors.grey[600]),
-                ),
-                SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: () => setState(() {}),
-                  child: Text('Retry'),
-                ),
-              ],
-            ),
-          );
+          return _buildErrorState(snapshot.error.toString());
         }
 
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                CircularProgressIndicator(color: primaryColor),
-                SizedBox(height: 16),
-                Text(
-                  'Loading orders...',
-                  style: TextStyle(color: Colors.grey[600]),
-                ),
-              ],
-            ),
-          );
-        }
-
-        if (!snapshot.hasData) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                CircularProgressIndicator(color: primaryColor),
-                SizedBox(height: 16),
-                Text(
-                  'Loading orders...',
-                  style: TextStyle(color: Colors.grey[600]),
-                ),
-              ],
-            ),
-          );
+        if (snapshot.connectionState == ConnectionState.waiting || !snapshot.hasData) {
+          return _buildLoadingState();
         }
 
         final orders = snapshot.data!.docs;
@@ -3193,19 +3243,16 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
             children: [
               _buildSummaryCards(pendingOrders.length, preparingOrders.length, preparedOrders.length),
               SizedBox(height: 20),
-
               if (preparedOrders.isNotEmpty) ...[
                 _buildSectionHeader('Ready to Serve', preparedOrders.length, Colors.green),
                 ...preparedOrders.map((order) => _buildOrderCard(order, true)),
                 SizedBox(height: 16),
               ],
-
               if (preparingOrders.isNotEmpty) ...[
                 _buildSectionHeader('Preparing', preparingOrders.length, Colors.orange),
                 ...preparingOrders.map((order) => _buildOrderCard(order, false)),
                 SizedBox(height: 16),
               ],
-
               if (pendingOrders.isNotEmpty) ...[
                 _buildSectionHeader('New Orders', pendingOrders.length, Colors.red),
                 ...pendingOrders.map((order) => _buildOrderCard(order, false)),
@@ -3223,14 +3270,11 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
           .collection('Orders')
           .where('branchId', isEqualTo: 'Old_Airport')
           .where('status', whereIn: ['pending', 'preparing', 'prepared']);
-
       if (orderType != 'all') {
         query = query.where('Order_type', isEqualTo: orderType);
       }
-
       return query.orderBy('timestamp', descending: true).snapshots();
     } catch (e) {
-      print('Error creating stream: $e');
       return Stream.empty();
     }
   }
@@ -3238,32 +3282,11 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
   Widget _buildSummaryCards(int pending, int preparing, int prepared) {
     return Row(
       children: [
-        Expanded(
-          child: _buildSummaryCard(
-              'New',
-              pending,
-              Colors.red,
-              Icons.fiber_new
-          ),
-        ),
+        Expanded(child: _buildSummaryCard('New', pending, Colors.red, Icons.fiber_new)),
         SizedBox(width: 12),
-        Expanded(
-          child: _buildSummaryCard(
-              'Preparing',
-              preparing,
-              Colors.orange,
-              Icons.restaurant
-          ),
-        ),
+        Expanded(child: _buildSummaryCard('Preparing', preparing, Colors.orange, Icons.restaurant)),
         SizedBox(width: 12),
-        Expanded(
-          child: _buildSummaryCard(
-              'Ready',
-              prepared,
-              Colors.green,
-              Icons.check_circle
-          ),
-        ),
+        Expanded(child: _buildSummaryCard('Ready', prepared, Colors.green, Icons.check_circle)),
       ],
     );
   }
@@ -3272,36 +3295,16 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
     return Container(
       padding: EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        gradient: LinearGradient(colors: [secondaryColor, Colors.white]),
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black12,
-            blurRadius: 4,
-            offset: Offset(0, 2),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 3))],
       ),
       child: Column(
         children: [
           Icon(icon, color: color, size: 24),
           SizedBox(height: 8),
-          Text(
-            count.toString(),
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey[600],
-              fontWeight: FontWeight.w500,
-            ),
-          ),
+          Text(count.toString(), style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: color)),
+          Text(title, style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.w500)),
         ],
       ),
     );
@@ -3312,44 +3315,20 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
       margin: EdgeInsets.only(bottom: 12),
       padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withOpacity(0.12),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.3)),
+        border: Border.all(color: color.withOpacity(0.25)),
       ),
       child: Row(
         children: [
-          Container(
-            width: 4,
-            height: 20,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
+          Container(width: 4, height: 20, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
           SizedBox(width: 12),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
+          Text(title, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color)),
           Spacer(),
           Container(
             padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              count.toString(),
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 12,
-              ),
-            ),
+            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
+            child: Text(count.toString(), style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
           ),
         ],
       ),
@@ -3366,38 +3345,30 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
     final totalAmount = (orderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
     final timestamp = orderData['timestamp'] as Timestamp?;
     final items = List<Map<String, dynamic>>.from(orderData['items'] ?? []);
+    final statusColor = _getFirestoreStatusColor(status);
 
-    final statusColor = _getStatusColor(status);
-
-    return Container(
-      margin: EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: isPriority ? Colors.green.withOpacity(0.2) : Colors.black12,
-            blurRadius: isPriority ? 8 : 4,
-            offset: Offset(0, isPriority ? 4 : 2),
+        onTap: () {
+          // Inside your list/card tap handler:
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => OrderDetailScreen(order: order),
+            ),
+          );
+
+        },
+        child: Container(
+          margin: EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [BoxShadow(color: isPriority ? Colors.green.withOpacity(0.2) : Colors.black12, blurRadius: isPriority ? 8 : 4, offset: Offset(0, isPriority ? 4 : 2))],
+            border: isPriority ? Border.all(color: Colors.green, width: 2) : null,
           ),
-        ],
-        border: isPriority
-            ? Border.all(color: Colors.green, width: 2)
-            : null,
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: () {
-            // Replace with your actual OrderDetailScreen navigation
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => OrderDetailScreen(order: order),
-              ),
-            );
-          },
           child: Padding(
             padding: EdgeInsets.all(16),
             child: Column(
@@ -3408,20 +3379,11 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
                     Container(
                       padding: EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: orderType == 'takeaway'
-                            ? Colors.orange[100]
-                            : Colors.blue[100],
+                        color: orderType == 'takeaway' ? Colors.orange : Colors.blue,
                         borderRadius: BorderRadius.circular(8),
                       ),
-                      child: Icon(
-                        orderType == 'takeaway'
-                            ? Icons.shopping_bag
-                            : Icons.table_restaurant,
-                        color: orderType == 'takeaway'
-                            ? Colors.orange[800]
-                            : Colors.blue[800],
-                        size: 20,
-                      ),
+                      child: Icon(orderType == 'takeaway' ? Icons.shopping_bag : Icons.table_restaurant,
+                          color: orderType == 'takeaway' ? Colors.orange : Colors.blue, size: 20),
                     ),
                     SizedBox(width: 12),
                     Expanded(
@@ -3430,98 +3392,53 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
                         children: [
                           Row(
                             children: [
-                              Text(
-                                'Order #$dailyOrderNumber',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: primaryColor,
-                                ),
-                              ),
+                              Text('Order #$dailyOrderNumber',
+                                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: primaryColor)),
                               if (isPriority) ...[
                                 SizedBox(width: 8),
                                 Container(
                                   padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: Colors.green,
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    'READY',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
+                                  decoration: BoxDecoration(color: Colors.green, borderRadius: BorderRadius.circular(4)),
+                                  child: Text('READY',
+                                      style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
                                 ),
                               ],
                             ],
                           ),
                           SizedBox(height: 4),
-                          Text(
-                            orderType == 'takeaway'
-                                ? (customerName != null ? 'Customer: $customerName' : 'Takeaway Order')
-                                : 'Table: ${tableNumber ?? 'N/A'}',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey[600],
-                            ),
-                          ),
+                          Text(orderType == 'takeaway'
+                              ? (customerName != null ? 'Customer: $customerName' : 'Takeaway Order')
+                              : 'Table: ${tableNumber ?? 'N/A'}', style: TextStyle(fontSize: 14, color: Colors.grey)),
                         ],
                       ),
                     ),
                     Container(
                       padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
-                        color: statusColor.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: statusColor, width: 1),
-                      ),
-                      child: Text(
-                        status.toUpperCase(),
-                        style: TextStyle(
-                          color: statusColor,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                          color: statusColor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: statusColor, width: 1)),
+                      child: Text(status.toUpperCase(), style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.bold)),
                     ),
                   ],
                 ),
                 SizedBox(height: 12),
                 Container(
                   padding: EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[50],
-                    borderRadius: BorderRadius.circular(8),
-                  ),
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8)),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Icon(Icons.restaurant_menu, size: 16, color: Colors.grey[600]),
-                          SizedBox(width: 4),
-                          Text(
-                            '${items.length} item${items.length != 1 ? 's' : ''}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
+                      Row(children: [
+                        Icon(Icons.restaurant_menu, size: 16, color: Colors.grey),
+                        SizedBox(width: 4),
+                        Text('${items.length} item${items.length != 1 ? 's' : ''}',
+                            style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.w500)),
+                      ]),
                       SizedBox(height: 4),
                       Text(
-                        items.take(2).map((item) =>
-                        '${item['name']} (${item['quantity']})'
-                        ).join(', ') + (items.length > 2 ? '...' : ''),
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.black87,
-                        ),
+                        items.take(2).map((item) => '${item['name']} (${item['quantity']})').join(', ') + (items.length > 2 ? '...' : ''),
+                        style: TextStyle(fontSize: 13, color: Colors.black87),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -3532,29 +3449,15 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      children: [
-                        Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
-                        SizedBox(width: 4),
-                        Text(
-                          timestamp != null ? _formatTime(timestamp.toDate()) : 'Unknown',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                      ],
-                    ),
-                    Text(
-                      '\$${totalAmount.toStringAsFixed(2)}',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: primaryColor,
-                      ),
-                    ),
+                    Row(children: [
+                      Icon(Icons.access_time, size: 16, color: Colors.grey),
+                      SizedBox(width: 4),
+                      Text(timestamp != null ? _formatTime(timestamp.toDate()) : 'Unknown', style: TextStyle(fontSize: 12, color: Colors.grey))
+                    ]),
+                    Text('\$${totalAmount.toStringAsFixed(2)}',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: primaryColor))
                   ],
-                ),
+                )
               ],
             ),
           ),
@@ -3568,74 +3471,197 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
     IconData icon;
 
     switch (orderType) {
-      case 'dine_in':
-        message = 'No active dine-in orders';
-        icon = Icons.table_restaurant;
-        break;
-      case 'takeaway':
-        message = 'No active takeaway orders';
-        icon = Icons.shopping_bag;
-        break;
-      default:
-        message = 'No active orders';
-        icon = Icons.restaurant;
+      case 'dine_in': message = 'No active dine-in orders'; icon = Icons.table_restaurant; break;
+      case 'takeaway': message = 'No active takeaway orders'; icon = Icons.shopping_bag; break;
+      case 'completed': message = 'No completed orders for today'; icon = Icons.check_circle_outline; break;
+      default: message = 'No active orders'; icon = Icons.restaurant;
     }
 
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            icon,
-            size: 64,
-            color: Colors.grey[300],
-          ),
+          Icon(icon, size: 64, color: Colors.grey),
           SizedBox(height: 16),
-          Text(
-            message,
-            style: TextStyle(
-              fontSize: 18,
-              color: Colors.grey[600],
-            ),
-          ),
-          SizedBox(height: 8),
-          Text(
-            'Orders will appear here when they are placed',
-            style: TextStyle(
-              color: Colors.grey[500],
-            ),
-          ),
+          Text(message, style: TextStyle(fontSize: 18, color: Colors.grey)),
+          if (orderType != 'completed') ...[
+            SizedBox(height: 8),
+            Text('Orders will appear here when they are placed', style: TextStyle(color: Colors.grey)),
+          ],
         ],
       ),
     );
   }
 
-  Color _getStatusColor(String status) {
+  Widget _buildErrorState(String error) {
+    return Center(
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Icon(Icons.error_outline, size: 64, color: Colors.red),
+        SizedBox(height: 16),
+        Text('Error loading orders', style: TextStyle(fontSize: 18, color: Colors.red)),
+        SizedBox(height: 8),
+        Text('Please check your connection', style: TextStyle(color: Colors.grey)),
+        SizedBox(height: 16),
+        ElevatedButton(onPressed: () => setState(() {}), child: Text('Retry')),
+      ]),
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return Center(
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        CircularProgressIndicator(color: primaryColor),
+        SizedBox(height: 16),
+        Text('Loading orders...', style: TextStyle(color: Colors.grey)),
+      ]),
+    );
+  }
+
+  Color _getFirestoreStatusColor(String status) {
     switch (status.toLowerCase()) {
-      case 'prepared':
-        return Colors.green;
-      case 'preparing':
-        return Colors.orange;
-      case 'pending':
-        return Colors.red;
-      default:
-        return Colors.grey;
+      case 'prepared': return Colors.green;
+      case 'preparing': return Colors.orange;
+      case 'pending': return Colors.red;
+      default: return Colors.grey;
     }
   }
 
   String _formatTime(DateTime dateTime) {
     final now = DateTime.now();
-    final difference = now.difference(dateTime);
+    final diff = now.difference(dateTime);
 
-    if (difference.inMinutes < 60) {
-      return '${difference.inMinutes}m ago';
-    } else if (difference.inHours < 24) {
-      return '${difference.inHours}h ago';
+    if (diff.inMinutes < 60) {
+      return '${diff.inMinutes}m ago';
+    } else if (diff.inHours < 24) {
+      return '${diff.inHours}h ago';
     } else {
       return '${dateTime.day}/${dateTime.month}';
     }
   }
+
+  Widget _buildCompletedOrdersList() {
+    final now = DateTime.now();
+    final startOfDay = DateTime(now.year, now.month, now.day);
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: _firestore
+          .collection('Orders')
+          .where('branchId', isEqualTo: 'Old_Airport')
+          .where('status', isEqualTo: 'paid')
+          .where('paymentTime', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
+          .orderBy('paymentTime', descending: true)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(child: Text('Error loading completed orders'));
+        }
+        if (!snapshot.hasData) {
+          return Center(child: CircularProgressIndicator());
+        }
+
+        final orders = snapshot.data!.docs;
+        if (orders.isEmpty) {
+          return _buildEmptyState('completed');
+        }
+
+        return ListView.builder(
+          padding: EdgeInsets.all(16),
+          itemCount: orders.length,
+          itemBuilder: (context, index) {
+            final order = orders[index];
+            final orderData = order.data() as Map<String, dynamic>;
+            final dailyOrderNumber = orderData['dailyOrderNumber']?.toString() ?? '';
+            final orderType = orderData['Order_type']?.toString() ?? 'dine_in';
+            final totalAmount = (orderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
+            final paymentMethod = orderData['paymentMethod']?.toString() ?? 'N/A';
+            final paymentTime = orderData['paymentTime'] as Timestamp?;
+            final items = List<Map<String, dynamic>>.from(orderData['items'] ?? []);
+
+            return GestureDetector(
+              onTap: () {
+                // Inside your list/card tap handler:
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => OrderDetailScreen(order: order),
+                  ),
+                );
+
+              },
+              child: Card(
+                margin: EdgeInsets.only(bottom: 16),
+                elevation: 3,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                color: Colors.white,
+                shadowColor: Colors.blueAccent.withOpacity(0.08),
+                child: Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        Icon(Icons.receipt_long, color: primaryColor, size: 24),
+                        SizedBox(width: 8),
+                        Text('Order #$dailyOrderNumber',
+                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: primaryColor)),
+                        Spacer(),
+                        Icon(Icons.arrow_forward_ios, color: Colors.grey, size: 18),
+                      ]),
+                      SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Chip(
+                            label: Text(orderType, style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                            backgroundColor: orderType == 'takeaway' ? Colors.orange : Colors.blue,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          SizedBox(width: 8),
+                          Chip(
+                            label: Text(paymentMethod, style: TextStyle(color: Colors.white, fontSize: 12)),
+                            backgroundColor: Colors.green,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        'Paid At: ${paymentTime != null ? _formatDateTime(paymentTime.toDate()) : 'N/A'}',
+                        style: TextStyle(fontSize: 14, color: Colors.grey),
+                      ),
+                      Divider(height: 24, thickness: 1.5, color: secondaryColor),
+                      ...items.take(2).map((item) => Padding(
+                          padding: EdgeInsets.only(bottom: 2),
+                          child: Text('${item['name']} x${item['quantity']}', style: TextStyle(fontSize: 14, color: Colors.black87))),
+                      ),
+                      if (items.length > 2)
+                        Text('+ ${items.length - 2} more...', style: TextStyle(fontSize: 13, color: Colors.grey)),
+                      SizedBox(height: 10),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('Total', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                          Text('\$${totalAmount.toStringAsFixed(2)}',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: primaryColor)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  String _formatDateTime(DateTime dt) {
+    return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')} '
+        '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  }
 }
+
+
 
 // Placeholder OrderDetailScreen, replace with your actual detail screen widget
 
@@ -4654,112 +4680,108 @@ class _MenuBrowserScreenState extends State<MenuBrowserScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.grey[50],
-      body: CustomScrollView(
-        slivers: [
-          SliverAppBar(
-            pinned: true,
-            expandedHeight: 140.0,
-            backgroundColor: primaryColor,
-            automaticallyImplyLeading: true,
-            iconTheme: IconThemeData(color: Colors.white),
-            flexibleSpace: FlexibleSpaceBar(
-              titlePadding: EdgeInsets.only(left: 60, bottom: 50),
-              title: Text(
-                'Menu Browser',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 22,
-                  color: Colors.white,
-                ),
-              ),
-              background: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [primaryColor, primaryColor.withOpacity(0.7)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
+    final primaryColor = Color(0xFF1976D2);
+
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        backgroundColor: Colors.grey[50],
+        body: NestedScrollView(
+          headerSliverBuilder: (context, innerBoxIsScrolled) => [
+            SliverAppBar(
+              pinned: true,
+              expandedHeight: 140.0,
+              backgroundColor: primaryColor,
+              automaticallyImplyLeading: true,
+              iconTheme: IconThemeData(color: Colors.white),
+              flexibleSpace: FlexibleSpaceBar(
+                titlePadding: EdgeInsets.only(left: 60, bottom: 50),
+                title: Text(
+                  'Menu Browser',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 22,
+                    color: Colors.white,
                   ),
                 ),
-                child: Stack(
-                  children: [
-                    Positioned(
-                      right: -80,
-                      top: -80,
-                      child: Container(
-                        width: 200,
-                        height: 200,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.white.withOpacity(0.1),
+                background: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [primaryColor, primaryColor.withOpacity(0.7)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        right: -80,
+                        top: -80,
+                        child: Container(
+                          width: 200,
+                          height: 200,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white.withOpacity(0.1),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-            bottom: PreferredSize(
-              preferredSize: Size.fromHeight(50.0),
-              child: Container(
-                color: Colors.white,
-                child: TabBar(
-                  controller: _tabController,
-                  labelColor: primaryColor,
-                  unselectedLabelColor: Colors.grey[600],
-                  indicatorColor: primaryColor,
-                  indicatorWeight: 3,
-                  labelStyle: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                  unselectedLabelStyle: TextStyle(
-                    fontWeight: FontWeight.w500,
-                    fontSize: 15,
-                  ),
-                  tabs: [
-                    Tab(
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.category_rounded, size: 20),
-                          SizedBox(width: 8),
-                          Text('Categories'),
-                        ],
-                      ),
-                    ),
-                    Tab(
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.restaurant_menu_rounded, size: 20),
-                          SizedBox(width: 8),
-                          Text('All Items'),
-                        ],
-                      ),
-                    ),
-                  ],
+              bottom: TabBar(
+                labelColor: primaryColor,
+                unselectedLabelColor: Colors.grey[600],
+                indicatorColor: primaryColor,
+                indicatorWeight: 3,
+                labelStyle: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
                 ),
-              ),
-            ),
-          ),
-          SliverFillRemaining(
-            child: FadeTransition(
-              opacity: _fadeAnimation,
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  CategoriesTab(),
-                  AllMenuItemsTab(),
+                unselectedLabelStyle: TextStyle(
+                  fontWeight: FontWeight.w500,
+                  fontSize: 15,
+                ),
+                tabs: [
+                  Tab(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.category_rounded, size: 20),
+                        SizedBox(width: 8),
+                        Text('Categories'),
+                      ],
+                    ),
+                  ),
+                  Tab(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.restaurant_menu_rounded, size: 20),
+                        SizedBox(width: 8),
+                        Text('All Items'),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
+          ],
+          body: FadeTransition(
+            opacity: _fadeAnimation,
+            child: TabBarView(
+              children: [
+                CategoriesTab(),
+                AllMenuItemsTab(),
+              ],
+            ),
           ),
-        ],
+        ),
       ),
     );
   }
+
 }
 
 class CategoriesTab extends StatefulWidget {
