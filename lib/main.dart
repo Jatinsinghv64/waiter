@@ -18,6 +18,8 @@ void main() async {
   runApp( MyApp());
 }
 class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -33,6 +35,8 @@ class MyApp extends StatelessWidget {
 
 // Authentication Wrapper
 class AuthWrapper extends StatelessWidget {
+  const AuthWrapper({super.key});
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
@@ -57,6 +61,8 @@ class AuthWrapper extends StatelessWidget {
 
 
 class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
   @override
   _LoginScreenState createState() => _LoginScreenState();
 }
@@ -708,7 +714,6 @@ class _MainWaiterAppState extends State<MainWaiterApp> {
   final List<Widget> _screens = [
     TablesScreen(),
     ActiveOrdersScreen(),
-    MenuBrowserScreen(),
     TakeawayOrderScreen(),
   ];
 
@@ -787,21 +792,7 @@ class _MainWaiterAppState extends State<MainWaiterApp> {
                 ),
                 label: 'Orders',
               ),
-              BottomNavigationBarItem(
-                icon: Container(
-                  padding: EdgeInsets.all(4),
-                  child: Icon(Icons.menu_book_outlined),
-                ),
-                activeIcon: Container(
-                  padding: EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(Icons.menu_book),
-                ),
-                label: 'Menu',
-              ),
+
               BottomNavigationBarItem(
                 icon: Container(
                   padding: EdgeInsets.all(4),
@@ -1711,24 +1702,45 @@ class _OrderScreenState extends State<OrderScreen> {
   String _tableStatus = 'available';
   String _searchQuery = '';
   StreamSubscription? _tableStatusSubscription;
+  StreamSubscription? _existingOrderSubscription;
   bool _isToggling = false;
 
   Timer? _timer;
   Duration _elapsed = Duration.zero;
   DateTime? _occupiedTime;
 
+  // New category-related variables
+  List<Map<String, dynamic>> _categories = [];
+  Set<String> _expandedCategories = <String>{};
+  bool _isLoadingCategories = false;
+  bool _isLoadingCart = false;
+
+  // Add this variable to track current order ID
+  String? _currentOrderId;
+  bool _isAddingToExistingOrder = false;
+
+  // Add these variables to track order status and payment status
+  String _currentOrderStatus = '';
+  String _currentPaymentStatus = 'unpaid';
+
   @override
   void initState() {
     super.initState();
     _tableStatus = widget.tableData['status']?.toString() ?? 'available';
 
-    if (widget.isAddingToExisting && widget.existingOrderId != null) {
-      _loadExistingOrder();
+    // Initialize current order ID and adding mode
+    _currentOrderId = widget.existingOrderId ?? widget.tableData['currentOrderId'];
+    _isAddingToExistingOrder = widget.isAddingToExisting || (_currentOrderId != null);
+
+    // Start listening to existing order if we have an order ID
+    if (_currentOrderId != null) {
+      _listenToExistingOrder();
     }
 
     _listenToTableStatus();
-
     _startOrResetTimer();
+    _loadCategories();
+    _loadCartItems();
 
     _searchController.addListener(() {
       setState(() {
@@ -1741,8 +1753,107 @@ class _OrderScreenState extends State<OrderScreen> {
   void dispose() {
     _searchController.dispose();
     _tableStatusSubscription?.cancel();
+    _existingOrderSubscription?.cancel();
     _timer?.cancel();
     super.dispose();
+  }
+
+  // Updated to track order status and payment status
+  void _listenToExistingOrder() {
+    if (_currentOrderId == null) return;
+
+    _existingOrderSubscription?.cancel();
+    _existingOrderSubscription = _firestore
+        .collection('Orders')
+        .doc(_currentOrderId)
+        .snapshots()
+        .listen((snapshot) {
+      if (snapshot.exists && mounted) {
+        final orderData = snapshot.data() as Map<String, dynamic>;
+        final items = List<Map<String, dynamic>>.from(orderData['items'] ?? []);
+        final status = orderData['status']?.toString() ?? '';
+        final paymentStatus = orderData['paymentStatus']?.toString() ?? 'unpaid';
+
+        setState(() {
+          _existingOrderItems = items;
+          _currentOrderStatus = status;
+          _currentPaymentStatus = paymentStatus;
+        });
+      }
+    });
+  }
+
+  // Load cart items from Firestore
+  Future<void> _loadCartItems() async {
+    setState(() => _isLoadingCart = true);
+    try {
+      final cartDoc = await _firestore
+          .collection('carts')
+          .doc('table_${widget.tableNumber}')
+          .get();
+
+      if (cartDoc.exists) {
+        final cartData = cartDoc.data() as Map<String, dynamic>;
+        final items = List<Map<String, dynamic>>.from(cartData['items'] ?? []);
+        setState(() {
+          _cartItems = items;
+          _calculateTotal();
+        });
+      }
+    } catch (e) {
+      print('Error loading cart items: $e');
+    } finally {
+      setState(() => _isLoadingCart = false);
+    }
+  }
+
+  // Save cart items to Firestore
+  Future<void> _saveCartItems() async {
+    try {
+      await _firestore.collection('carts').doc('table_${widget.tableNumber}').set({
+        'items': _cartItems,
+        'lastUpdated': Timestamp.now(),
+        'tableNumber': widget.tableNumber,
+      });
+    } catch (e) {
+      print('Error saving cart items: $e');
+    }
+  }
+
+  // Load categories from Firestore
+  Future<void> _loadCategories() async {
+    setState(() => _isLoadingCategories = true);
+
+    try {
+      // Load categories
+      final categoriesSnapshot = await _firestore
+          .collection('menu_categories')
+          .where('branchId', isEqualTo: 'Old_Airport')
+          .where('isActive', isEqualTo: true)
+          .orderBy('sortOrder')
+          .get();
+
+      setState(() {
+        _categories = categoriesSnapshot.docs
+            .map((doc) => {
+          'id': doc.id,
+          'name': doc.data()['name'] ?? 'Unknown',
+          'imageUrl': doc.data()['imageUrl'] ?? '',
+          'sortOrder': doc.data()['sortOrder'] ?? 0,
+        })
+            .toList();
+        _isLoadingCategories = false;
+
+        // Auto-expand first category if any exist
+        if (_categories.isNotEmpty) {
+          _expandedCategories.add(_categories[0]['name']);
+        }
+      });
+
+    } catch (e) {
+      print('Error loading categories: $e');
+      setState(() => _isLoadingCategories = false);
+    }
   }
 
   void _listenToTableStatus() {
@@ -1763,7 +1874,14 @@ class _OrderScreenState extends State<OrderScreen> {
               _tableStatus = newStatus;
               _startOrResetTimer();
 
-              // Capture the time when table became occupied or ordered
+              // Update current order ID from table data if needed
+              final tableOrderId = tableData['currentOrderId']?.toString();
+              if (tableOrderId != null && _currentOrderId != tableOrderId) {
+                _currentOrderId = tableOrderId;
+                _isAddingToExistingOrder = true;
+                _listenToExistingOrder();
+              }
+
               if (_tableStatus == 'occupied' || _tableStatus == 'ordered') {
                 final Timestamp? ts = tableData['statusTimestamp'];
                 if (ts != null) {
@@ -1839,12 +1957,10 @@ class _OrderScreenState extends State<OrderScreen> {
 
   Future<void> _toggleTableAvailability() async {
     if (_isToggling) return;
-
     setState(() => _isToggling = true);
 
     try {
       if (_tableStatus == 'available') {
-        // Mark as occupied with timestamp
         await _firestore.collection('Branch').doc('Old_Airport').update({
           'Tables.${widget.tableNumber}.status': 'occupied',
           'Tables.${widget.tableNumber}.statusTimestamp': Timestamp.now(),
@@ -1859,7 +1975,6 @@ class _OrderScreenState extends State<OrderScreen> {
           ),
         );
       } else {
-        // Mark as available (confirm for occupied or ordered)
         if (_tableStatus == 'occupied' || _tableStatus == 'ordered') {
           _showMarkAvailableDialog();
         }
@@ -1928,6 +2043,18 @@ class _OrderScreenState extends State<OrderScreen> {
         'Tables.${widget.tableNumber}.statusTimestamp': FieldValue.delete(),
       });
 
+      // Clear cart when table is marked available
+      await _firestore.collection('carts').doc('table_${widget.tableNumber}').delete();
+
+      // Reset local state
+      setState(() {
+        _currentOrderId = null;
+        _isAddingToExistingOrder = false;
+        _existingOrderItems.clear();
+        _currentOrderStatus = '';
+        _currentPaymentStatus = 'unpaid';
+      });
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Table ${widget.tableNumber} marked as available!'),
@@ -1946,23 +2073,42 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
-  Future<void> _loadExistingOrder() async {
-    try {
-      final orderDoc = await _firestore
-          .collection('Orders')
-          .doc(widget.existingOrderId)
-          .get();
+  // Add navigation to OrderDetailScreen
+  void _navigateToOrderDetail() {
+    if (_currentOrderId == null) return;
 
-      if (orderDoc.exists) {
-        final orderData = orderDoc.data() as Map<String, dynamic>;
-        final items = List<Map<String, dynamic>>.from(orderData['items'] ?? []);
-        setState(() {
-          _existingOrderItems = items;
-        });
+    _firestore
+        .collection('Orders')
+        .where(FieldPath.documentId, isEqualTo: _currentOrderId)
+        .limit(1)
+        .get()
+        .then((querySnapshot) {
+      if (querySnapshot.docs.isNotEmpty) {
+        final orderDoc = querySnapshot.docs.first; // This is QueryDocumentSnapshot
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => OrderDetailScreen(order: orderDoc),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Order not found'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       }
-    } catch (e) {
-      print('Error loading existing order: $e');
-    }
+    }).catchError((e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error loading order details: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    });
   }
 
   @override
@@ -1979,7 +2125,7 @@ class _OrderScreenState extends State<OrderScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              widget.isAddingToExisting
+              _isAddingToExistingOrder
                   ? 'Add to Table ${widget.tableNumber} Order'
                   : 'Table ${widget.tableNumber} Order',
               style: TextStyle(
@@ -2072,26 +2218,15 @@ class _OrderScreenState extends State<OrderScreen> {
         ),
         child: Column(
           children: [
-            if (widget.isAddingToExisting && _existingOrderItems.isNotEmpty)
+            if (_isAddingToExistingOrder && _existingOrderItems.isNotEmpty)
               _buildExistingOrderSection(),
             if (_cartItems.isNotEmpty) _buildCartSection(),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (_cartItems.isEmpty && !widget.isAddingToExisting) _buildEmptyCart(),
+                  if (_cartItems.isEmpty && !_isAddingToExistingOrder) _buildEmptyCart(),
                   _buildSearchBar(),
-                  Padding(
-                    padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
-                    child: Text(
-                      'Menu Items',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: primaryColor,
-                      ),
-                    ),
-                  ),
                   Expanded(child: _buildMenuList()),
                 ],
               ),
@@ -2100,6 +2235,32 @@ class _OrderScreenState extends State<OrderScreen> {
         ),
       ),
       bottomNavigationBar: _buildBottomNavigationBar(),
+      floatingActionButton: _categories.isNotEmpty ? FloatingActionButton.extended(
+        onPressed: () {
+          setState(() {
+            if (_expandedCategories.length == _categories.length) {
+              _expandedCategories.clear(); // Collapse all
+            } else {
+              _expandedCategories = _categories
+                  .map((cat) => cat['name'] as String)
+                  .toSet(); // Expand all
+            }
+          });
+        },
+        backgroundColor: primaryColor,
+        icon: Icon(
+          _expandedCategories.length == _categories.length
+              ? Icons.expand_less
+              : Icons.expand_more,
+          color: Colors.white,
+        ),
+        label: Text(
+          _expandedCategories.length == _categories.length
+              ? 'Collapse All'
+              : 'Expand All',
+          style: TextStyle(color: Colors.white),
+        ),
+      ) : null,
     );
   }
 
@@ -2128,7 +2289,7 @@ class _OrderScreenState extends State<OrderScreen> {
               _buildInfoRow('Items in Cart', '${_cartItems.length}', null),
               if (_totalAmount > 0) ...[
                 SizedBox(height: 8),
-                _buildInfoRow('Cart Total', '\$${_totalAmount.toStringAsFixed(2)}', null),
+                _buildInfoRow('Cart Total', 'QAR ${_totalAmount.toStringAsFixed(2)}', null),
               ],
               if (_tableStatus == 'occupied' || _tableStatus == 'ordered') ...[
                 SizedBox(height: 8),
@@ -2210,46 +2371,82 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
+  // Updated with navigation functionality
   Widget _buildExistingOrderSection() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.blue[50],
-        border: Border(bottom: BorderSide(color: primaryColor.withOpacity(0.2))),
-      ),
-      padding: EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.history, size: 16, color: primaryColor),
-              SizedBox(width: 8),
-              Text(
-                'Existing Order Items',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: primaryColor,
+    return InkWell(
+      onTap: _navigateToOrderDetail,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.blue[50],
+          border: Border(bottom: BorderSide(color: primaryColor.withOpacity(0.2))),
+        ),
+        padding: EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.history, size: 16, color: primaryColor),
+                SizedBox(width: 8),
+                Text(
+                  'Existing Order Items',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: primaryColor,
+                  ),
                 ),
+                Spacer(),
+                Row(
+                  children: [
+                    if (_currentOrderStatus == 'served' && _currentPaymentStatus == 'unpaid')
+                      Container(
+                        padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.red,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          'UNPAID',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    SizedBox(width: 4),
+                    Icon(Icons.arrow_forward_ios, size: 12, color: Colors.grey),
+                  ],
+                ),
+              ],
+            ),
+            SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: _existingOrderItems.map((item) {
+                return Chip(
+                  label: Text(
+                    '${item['name']} (x${item['quantity']})',
+                    style: TextStyle(fontSize: 11),
+                  ),
+                  backgroundColor: primaryColor.withOpacity(0.1),
+                  labelStyle: TextStyle(color: primaryColor),
+                  side: BorderSide(color: primaryColor.withOpacity(0.3)),
+                );
+              }).toList(),
+            ),
+            SizedBox(height: 4),
+            Text(
+              'Tap to view order details',
+              style: TextStyle(
+                fontSize: 10,
+                color: Colors.grey[600],
+                fontStyle: FontStyle.italic,
               ),
-            ],
-          ),
-          SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 4,
-            children: _existingOrderItems.map((item) {
-              return Chip(
-                label: Text(
-                  '${item['name']} (x${item['quantity']})',
-                  style: TextStyle(fontSize: 11),
-                ),
-                backgroundColor: primaryColor.withOpacity(0.1),
-                labelStyle: TextStyle(color: primaryColor),
-                side: BorderSide(color: primaryColor.withOpacity(0.3)),
-              );
-            }).toList(),
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2274,7 +2471,7 @@ class _OrderScreenState extends State<OrderScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  widget.isAddingToExisting ? 'Additional Items' : 'Current Order',
+                  _isAddingToExistingOrder ? 'Additional Items' : 'Current Order',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -2282,9 +2479,9 @@ class _OrderScreenState extends State<OrderScreen> {
                   ),
                 ),
                 Text(
-                  '+\$$_totalAmount',
+                  '+QAR ${_totalAmount.toStringAsFixed(2)}',
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: 14,
                     fontWeight: FontWeight.bold,
                     color: primaryColor,
                   ),
@@ -2338,12 +2535,25 @@ class _OrderScreenState extends State<OrderScreen> {
                             ),
                             SizedBox(height: 4),
                             Text(
-                              '\$${item['price'].toStringAsFixed(2)} each',
+                              'QAR ${item['price'].toStringAsFixed(2)} each',
                               style: TextStyle(
                                 color: Colors.grey[600],
                                 fontSize: 12,
                               ),
                             ),
+                            if (item['specialInstructions'] != null && item['specialInstructions'].isNotEmpty)
+                              SizedBox(height: 4),
+                            if (item['specialInstructions'] != null && item['specialInstructions'].isNotEmpty)
+                              Text(
+                                'Special: ${item['specialInstructions']}',
+                                style: TextStyle(
+                                  color: Colors.orange[700],
+                                  fontSize: 10,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                           ],
                         ),
                         Row(
@@ -2438,7 +2648,12 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
+  // Updated _buildMenuList with category-based collapsible UI
   Widget _buildMenuList() {
+    if (_isLoadingCategories) {
+      return Center(child: CircularProgressIndicator());
+    }
+
     return StreamBuilder<QuerySnapshot>(
       stream: _firestore
           .collection('menu_items')
@@ -2452,186 +2667,441 @@ class _OrderScreenState extends State<OrderScreen> {
 
         final menuItems = snapshot.data!.docs;
 
+        // Filter items based on search query
         final filteredItems = menuItems.where((item) {
           if (_searchQuery.isEmpty) return true;
-
           final itemData = item.data() as Map<String, dynamic>;
           final name = itemData['name']?.toString().toLowerCase() ?? '';
-          final description =
-              itemData['description']?.toString().toLowerCase() ?? '';
+          final description = itemData['description']?.toString().toLowerCase() ?? '';
+          final category = itemData['category']?.toString().toLowerCase() ?? '';
 
-          return name.contains(_searchQuery) || description.contains(_searchQuery);
+          return name.contains(_searchQuery) ||
+              description.contains(_searchQuery) ||
+              category.contains(_searchQuery);
         }).toList();
 
         if (filteredItems.isEmpty && _searchQuery.isNotEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.search_off,
-                  size: 64,
-                  color: Colors.grey[300],
-                ),
-                SizedBox(height: 16),
-                Text(
-                  'No dishes found',
-                  style: TextStyle(
-                    fontSize: 18,
-                    color: Colors.grey[600],
-                  ),
-                ),
-                SizedBox(height: 8),
-                Text(
-                  'Try searching with different keywords',
-                  style: TextStyle(
-                    color: Colors.grey[500],
-                  ),
-                ),
-              ],
-            ),
-          );
+          return _buildNoResultsWidget();
+        }
+
+        // Group items by category ID instead of name for better matching
+        Map<String, List<QueryDocumentSnapshot>> categorizedItems = {};
+
+        // First, create empty lists for all categories
+        for (var category in _categories) {
+          categorizedItems[category['id']] = [];
+        }
+
+        // Add "Other" category for items that don't match
+        categorizedItems['other'] = [];
+
+        // Then add items to their respective categories
+        for (var item in filteredItems) {
+          final itemData = item.data() as Map<String, dynamic>;
+          final itemCategoryId = itemData['categoryId']?.toString(); // Try categoryId first
+          final itemCategoryName = itemData['category']?.toString(); // Then try category name
+
+          bool itemCategorized = false;
+
+          // Try to match by category ID
+          if (itemCategoryId != null && categorizedItems.containsKey(itemCategoryId)) {
+            categorizedItems[itemCategoryId]!.add(item);
+            itemCategorized = true;
+          }
+          // Try to match by category name
+          else if (itemCategoryName != null) {
+            for (var category in _categories) {
+              if (category['name'] == itemCategoryName) {
+                categorizedItems[category['id']]!.add(item);
+                itemCategorized = true;
+                break;
+              }
+            }
+          }
+
+          // If still not categorized, put in "Other"
+          if (!itemCategorized) {
+            categorizedItems['other']!.add(item);
+          }
         }
 
         return ListView.builder(
           padding: EdgeInsets.all(16),
-          itemCount: filteredItems.length,
+          itemCount: _categories.length + (categorizedItems['other']!.isNotEmpty ? 1 : 0),
           itemBuilder: (context, index) {
-            final item = filteredItems[index];
-            final itemData = item.data() as Map<String, dynamic>;
-            final name = itemData['name']?.toString() ?? 'Unknown Item';
-            final description = itemData['description']?.toString() ?? '';
-            final price = (itemData['price'] as num?)?.toDouble() ?? 0.0;
-            final imageUrl = itemData['imageUrl']?.toString();
-            final estimatedTime = itemData['EstimatedTime']?.toString() ?? '';
-            final isPopular = itemData['isPopular'] ?? false;
-
-            return Card(
-              margin: EdgeInsets.only(bottom: 12),
-              elevation: 2,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: ListTile(
-                contentPadding: EdgeInsets.all(12),
-                leading: imageUrl != null
-                    ? ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.network(
-                    imageUrl,
-                    width: 60,
-                    height: 60,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) =>
-                        _buildPlaceholderIcon(),
-                  ),
-                )
-                    : _buildPlaceholderIcon(),
-                title: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        name,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w500,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (isPopular) ...[
-                      SizedBox(width: 8),
-                      Container(
-                        padding:
-                        EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.amber,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          'POPULAR',
-                          style: TextStyle(
-                            fontSize: 8,
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (description.isNotEmpty)
-                      Text(
-                        description,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Text(
-                          '\$${price.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: primaryColor,
-                          ),
-                        ),
-                        if (estimatedTime.isNotEmpty) ...[
-                          SizedBox(width: 16),
-                          Icon(Icons.timer, size: 12, color: Colors.grey),
-                          SizedBox(width: 4),
-                          Text(
-                            '$estimatedTime mins',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ],
-                ),
-                trailing: Container(
-                  decoration: BoxDecoration(
-                    color: primaryColor,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: IconButton(
-                    icon: Icon(Icons.add, color: Colors.white, size: 20),
-                    onPressed: () => _addToCart(item),
-                    padding: EdgeInsets.all(6),
-                  ),
-                ),
-              ),
-            );
+            if (index < _categories.length) {
+              final category = _categories[index];
+              final categoryItems = categorizedItems[category['id']] ?? [];
+              return _buildCategorySection(category, categoryItems);
+            } else {
+              // "Other" category section
+              final otherItems = categorizedItems['other']!;
+              return _buildCategorySection({
+                'id': 'other',
+                'name': 'Other Items',
+                'imageUrl': '',
+                'sortOrder': 999,
+              }, otherItems);
+            }
           },
         );
       },
     );
   }
 
-  Widget _buildPlaceholderIcon() {
-    return Container(
-      width: 60,
-      height: 60,
-      decoration: BoxDecoration(
-        color: primaryColor.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
+// Helper method to get category name by ID
+  String _getCategoryNameById(String categoryId) {
+    if (categoryId == 'other') return 'Other Items';
+    final category = _categories.firstWhere(
+          (cat) => cat['id'] == categoryId,
+      orElse: () => {'name': 'Unknown'},
+    );
+    return category['name'];
+  }
+
+  Widget _buildNoResultsWidget() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.search_off, size: 64, color: Colors.grey[300]),
+          SizedBox(height: 16),
+          Text('No dishes found', style: TextStyle(fontSize: 18, color: Colors.grey[600])),
+          SizedBox(height: 8),
+          Text('Try searching with different keywords', style: TextStyle(color: Colors.grey[500])),
+        ],
       ),
-      child: Icon(Icons.restaurant_menu, color: primaryColor),
     );
   }
 
+  Widget _buildCategorySection(Map<String, dynamic> category, List<QueryDocumentSnapshot> items) {
+    final categoryName = category['name'];
+    final imageUrl = category['imageUrl'];
+    final isExpanded = _expandedCategories.contains(categoryName);
+    final hasItems = items.isNotEmpty;
+
+    return Card(
+      margin: EdgeInsets.only(bottom: 12),
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Column(
+        children: [
+          // Category Header (always visible)
+          InkWell(
+            onTap: hasItems ? () {
+              setState(() {
+                if (isExpanded) {
+                  _expandedCategories.remove(categoryName);
+                } else {
+                  _expandedCategories.add(categoryName);
+                }
+              });
+            } : null,
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  // Category Image
+                  Container(
+                    width: 50,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      color: primaryColor.withOpacity(0.1),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: imageUrl.isNotEmpty
+                          ? Image.network(
+                        imageUrl,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) =>
+                            Icon(Icons.restaurant_menu, color: primaryColor, size: 24),
+                      )
+                          : Icon(Icons.restaurant_menu, color: primaryColor, size: 24),
+                    ),
+                  ),
+                  SizedBox(width: 16),
+
+                  // Category Name and Item Count
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          categoryName,
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: primaryColor),
+                        ),
+                        if (hasItems)
+                          Text(
+                            '${items.length} item${items.length != 1 ? 's' : ''}',
+                            style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                          ),
+                      ],
+                    ),
+                  ),
+
+                  // Expand/Collapse Arrow
+                  if (hasItems)
+                    AnimatedRotation(
+                      turns: isExpanded ? 0.5 : 0,
+                      duration: Duration(milliseconds: 200),
+                      child: Icon(Icons.keyboard_arrow_down, color: primaryColor, size: 28),
+                    ),
+
+                  // No items indicator
+                  if (!hasItems)
+                    Container(
+                      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(12)),
+                      child: Text('No items', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                    ),
+                ],
+              ),
+            ),
+          ),
+
+          // Expandable Items Section
+          AnimatedCrossFade(
+            firstChild: SizedBox.shrink(),
+            secondChild: hasItems ? _buildCategoryItems(items) : SizedBox.shrink(),
+            crossFadeState: isExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+            duration: Duration(milliseconds: 300),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCategoryItems(List<QueryDocumentSnapshot> items) {
+    return Container(
+      padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: GridView.builder(
+        shrinkWrap: true,
+        physics: NeverScrollableScrollPhysics(),
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          childAspectRatio: 0.8,
+          crossAxisSpacing: 10,
+          mainAxisSpacing: 10,
+        ),
+        itemCount: items.length,
+        itemBuilder: (context, index) {
+          return _buildMenuItemCard(items[index]);
+        },
+      ),
+    );
+  }
+
+  Widget _buildMenuItemCard(QueryDocumentSnapshot item) {
+    final itemData = item.data() as Map<String, dynamic>;
+    final name = itemData['name']?.toString() ?? 'Unknown Item';
+    final price = (itemData['price'] as num?)?.toDouble() ?? 0.0;
+    final imageUrl = itemData['imageUrl']?.toString();
+    final estimatedTime = itemData['EstimatedTime']?.toString() ?? '';
+    final isPopular = itemData['isPopular'] ?? false;
+    final hasCustomization = itemData['hasCustomization'] ?? false;
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Image Section
+          Expanded(
+            flex: 4, // Reduced from 5 to give more space to content
+            child: Container(
+              width: double.infinity,
+              child: Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(12),
+                      topRight: Radius.circular(12),
+                    ),
+                    child: imageUrl != null && imageUrl.isNotEmpty
+                        ? Image.network(
+                      imageUrl,
+                      width: double.infinity,
+                      height: double.infinity,
+                      fit: BoxFit.cover,
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return Container(
+                          color: primaryColor.withOpacity(0.1),
+                          child: Center(
+                            child: CircularProgressIndicator(
+                              color: primaryColor,
+                              strokeWidth: 2,
+                              value: loadingProgress.expectedTotalBytes != null
+                                  ? loadingProgress.cumulativeBytesLoaded /
+                                  loadingProgress.expectedTotalBytes!
+                                  : null,
+                            ),
+                          ),
+                        );
+                      },
+                      errorBuilder: (context, error, stackTrace) => Container(
+                        color: primaryColor.withOpacity(0.1),
+                        child: Icon(Icons.restaurant_menu, color: primaryColor, size: 30),
+                      ),
+                    )
+                        : Container(
+                      color: primaryColor.withOpacity(0.1),
+                      child: Icon(Icons.restaurant_menu, color: primaryColor, size: 30),
+                    ),
+                  ),
+                  // Popular badge
+                  if (isPopular)
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: Container(
+                        padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.amber,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          'POPULAR',
+                          style: TextStyle(
+                            fontSize: 7,
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+
+          // Content Section
+          Expanded(
+            flex: 5, // Increased from 4 to give more space to content
+            child: Padding(
+              padding: EdgeInsets.all(8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // Item Name
+                  Flexible(
+                    flex: 2,
+                    child: Text(
+                      name,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+
+                  SizedBox(height: 4),
+
+                  // Price and Time Row
+                  Flexible(
+                    flex: 1,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            'QAR ${price.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: primaryColor,
+                              fontSize: 13,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (estimatedTime.isNotEmpty)
+                          Flexible(
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.timer, size: 10, color: Colors.grey),
+                                SizedBox(width: 2),
+                                Text(
+                                  '${estimatedTime}m',
+                                  style: TextStyle(
+                                    fontSize: 9,
+                                    color: Colors.grey,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+
+                  SizedBox(height: 8), // Increased spacing
+
+                  // Add Button - INCREASED HEIGHT
+                  Flexible(
+                    flex: 2, // Increased from 1 to give more space to button
+                    child: SizedBox(
+                      width: double.infinity,
+                      height: 36, // Increased from 28 to 36
+                      child: ElevatedButton(
+                        onPressed: () => hasCustomization
+                            ? _showCustomizationOptions(item)
+                            : _addToCart(item, null),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: primaryColor,
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4), // Added padding
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.add, size: 16), // Slightly larger icon
+                            SizedBox(width: 6), // Increased spacing
+                            Text(
+                              'Add',
+                              style: TextStyle(
+                                fontSize: 13, // Increased font size
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // UPDATED: Enhanced payment button logic with all required conditions
+  // Updated to show payment button for served but unpaid orders with all conditions
   Widget? _buildBottomNavigationBar() {
-    if (_cartItems.isEmpty && _tableStatus != 'ordered') return null;
+    // Enhanced condition: order served + unpaid + seat occupied + order exists
+    bool showPaymentButton = _currentOrderStatus == 'served' &&
+        _currentPaymentStatus == 'unpaid' &&
+        (_tableStatus == 'occupied' || _tableStatus == 'ordered') &&
+        _currentOrderId != null;
+
+    if (_cartItems.isEmpty && _tableStatus != 'ordered' && !showPaymentButton) return null;
 
     return Container(
       padding: EdgeInsets.all(16),
@@ -2660,7 +3130,7 @@ class _OrderScreenState extends State<OrderScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        widget.isAddingToExisting
+                        _isAddingToExistingOrder
                             ? 'Additional Total'
                             : 'Total Amount',
                         style: TextStyle(
@@ -2669,7 +3139,7 @@ class _OrderScreenState extends State<OrderScreen> {
                         ),
                       ),
                       Text(
-                        '\$$_totalAmount',
+                        'QAR ${_totalAmount.toStringAsFixed(2)}',
                         style: TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
@@ -2702,7 +3172,7 @@ class _OrderScreenState extends State<OrderScreen> {
                       Icon(Icons.check_circle_outline, size: 20),
                       SizedBox(width: 8),
                       Text(
-                        widget.isAddingToExisting ? 'Add Items' : 'Submit Order',
+                        _isAddingToExistingOrder ? 'Add Items' : 'Submit Order',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 16,
@@ -2713,7 +3183,43 @@ class _OrderScreenState extends State<OrderScreen> {
                 ),
               ],
             ),
-          if (_tableStatus == 'ordered' || _tableStatus == 'occupied')
+
+          // UPDATED: Payment button with all required conditions
+          if (showPaymentButton)
+            Padding(
+              padding: EdgeInsets.only(top: _cartItems.isNotEmpty ? 12 : 0),
+              child: ElevatedButton(
+                onPressed: _isCheckingOut ? null : _showPaymentOptions,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  minimumSize: Size(double.infinity, 48),
+                ),
+                child: _isCheckingOut
+                    ? CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                    : Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.payment, size: 20),
+                    SizedBox(width: 8),
+                    Text(
+                      'Pay Now - Order Served',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          // Original checkout button for other statuses
+          if ((_tableStatus == 'ordered' || _tableStatus == 'occupied') && !showPaymentButton)
             Padding(
               padding: EdgeInsets.only(top: _cartItems.isNotEmpty ? 12 : 0),
               child: ElevatedButton(
@@ -2750,24 +3256,195 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
-  void _addToCart(QueryDocumentSnapshot item) {
+
+  void _showCustomizationOptions(QueryDocumentSnapshot item) {
+    final itemData = item.data() as Map<String, dynamic>;
+    final name = itemData['name']?.toString() ?? 'Unknown Item';
+    final price = (itemData['price'] as num?)?.toDouble() ?? 0.0;
+
+    String specialInstructions = '';
+    int quantity = 1;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            return Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(20),
+                  topRight: Radius.circular(20),
+                ),
+              ),
+              padding: EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        name,
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        'QAR ${price.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: primaryColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 16),
+
+                  // Quantity Selector
+                  Text(
+                    'Quantity',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      IconButton(
+                        icon: Icon(Icons.remove),
+                        onPressed: () {
+                          if (quantity > 1) {
+                            setModalState(() {
+                              quantity--;
+                            });
+                          }
+                        },
+                      ),
+                      Container(
+                        width: 50,
+                        padding: EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          quantity.toString(),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.add),
+                        onPressed: () {
+                          setModalState(() {
+                            quantity++;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+
+                  SizedBox(height: 16),
+
+                  // Special Instructions
+                  Text(
+                    'Special Instructions (Optional)',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  SizedBox(height: 8),
+                  TextField(
+                    maxLines: 3,
+                    decoration: InputDecoration(
+                      hintText: 'E.g. No onions, extra spicy, etc.',
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (value) {
+                      specialInstructions = value;
+                    },
+                  ),
+
+                  SizedBox(height: 20),
+
+                  // Add to Cart Button
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _addToCart(item, specialInstructions, quantity: quantity);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: primaryColor,
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: Text(
+                        'Add to Cart - QAR ${(price * quantity).toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _addToCart(QueryDocumentSnapshot item, String? specialInstructions, {int quantity = 1}) {
     setState(() {
       final itemData = item.data() as Map<String, dynamic>;
       final existingIndex =
-      _cartItems.indexWhere((cartItem) => cartItem['id'] == item.id);
+      _cartItems.indexWhere((cartItem) =>
+      cartItem['id'] == item.id &&
+          cartItem['specialInstructions'] == specialInstructions
+      );
 
       if (existingIndex >= 0) {
-        _cartItems[existingIndex]['quantity'] += 1;
+        _cartItems[existingIndex]['quantity'] += quantity;
       } else {
         _cartItems.add({
           'id': item.id,
           'name': itemData['name']?.toString() ?? 'Unknown Item',
           'price': (itemData['price'] as num?)?.toDouble() ?? 0.0,
-          'quantity': 1,
+          'quantity': quantity,
+          'specialInstructions': specialInstructions,
         });
       }
       _calculateTotal();
+      _saveCartItems(); // Save to Firestore
     });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Added to cart successfully!'),
+        backgroundColor: Colors.green,
+        duration: Duration(seconds: 2),
+      ),
+    );
   }
 
   void _updateQuantity(int index, int change) {
@@ -2777,6 +3454,7 @@ class _OrderScreenState extends State<OrderScreen> {
         _cartItems.removeAt(index);
       }
       _calculateTotal();
+      _saveCartItems(); // Save to Firestore
     });
   }
 
@@ -2784,6 +3462,7 @@ class _OrderScreenState extends State<OrderScreen> {
     setState(() {
       _cartItems.removeAt(index);
       _calculateTotal();
+      _saveCartItems(); // Save to Firestore
     });
   }
 
@@ -2797,7 +3476,8 @@ class _OrderScreenState extends State<OrderScreen> {
 
   Future<void> _submitOrder() async {
     try {
-      if (widget.isAddingToExisting && widget.existingOrderId != null) {
+      // Check if we're adding to existing order or creating new
+      if (_isAddingToExistingOrder && _currentOrderId != null) {
         await _addToExistingOrder();
       } else {
         await _createNewOrder();
@@ -2809,7 +3489,7 @@ class _OrderScreenState extends State<OrderScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(widget.isAddingToExisting
+          content: Text(_isAddingToExistingOrder
               ? 'Items added to order successfully!'
               : 'Order submitted successfully!'),
           backgroundColor: Colors.green,
@@ -2821,6 +3501,9 @@ class _OrderScreenState extends State<OrderScreen> {
         _cartItems.clear();
         _totalAmount = 0.0;
       });
+
+      // Clear persisted cart
+      await _firestore.collection('carts').doc('table_${widget.tableNumber}').delete();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -2849,6 +3532,7 @@ class _OrderScreenState extends State<OrderScreen> {
       'subtotal': _totalAmount,
       'totalAmount': _totalAmount,
       'status': 'pending',
+      'paymentStatus': 'unpaid',
       'timestamp': Timestamp.now(),
       'dailyOrderNumber': dailyOrderNumber,
       'branchId': 'Old_Airport',
@@ -2859,12 +3543,23 @@ class _OrderScreenState extends State<OrderScreen> {
       'Tables.${widget.tableNumber}.currentOrderId': orderRef.id,
       'Tables.${widget.tableNumber}.statusTimestamp': Timestamp.now(),
     });
+
+    // IMPORTANT: After creating new order, update local state to enable adding more items
+    setState(() {
+      _currentOrderId = orderRef.id;
+      _isAddingToExistingOrder = true;
+    });
+
+    // Start listening to the newly created order immediately
+    _listenToExistingOrder();
   }
 
   Future<void> _addToExistingOrder() async {
+    if (_currentOrderId == null) return;
+
     final orderDoc = await _firestore
         .collection('Orders')
-        .doc(widget.existingOrderId)
+        .doc(_currentOrderId)
         .get();
 
     if (orderDoc.exists) {
@@ -2877,7 +3572,7 @@ class _OrderScreenState extends State<OrderScreen> {
       final newTotal = currentTotal + _totalAmount;
       final newSubtotal = currentSubtotal + _totalAmount;
 
-      await _firestore.collection('Orders').doc(widget.existingOrderId).update({
+      await _firestore.collection('Orders').doc(_currentOrderId).update({
         'items': mergedItems,
         'subtotal': newSubtotal,
         'totalAmount': newTotal,
@@ -2894,7 +3589,7 @@ class _OrderScreenState extends State<OrderScreen> {
 
     for (final newItem in newItems) {
       final existingIndex = merged.indexWhere(
-              (item) => item['id'] == newItem['id']);
+              (item) => item['id'] == newItem['id'] && item['specialInstructions'] == newItem['specialInstructions']);
 
       if (existingIndex >= 0) {
         merged[existingIndex]['quantity'] += newItem['quantity'];
@@ -3009,15 +3704,15 @@ class _OrderScreenState extends State<OrderScreen> {
     try {
       final orderDoc = await _firestore
           .collection('Orders')
-          .doc(widget.existingOrderId ?? widget.tableData['currentOrderId'])
+          .doc(_currentOrderId ?? widget.tableData['currentOrderId'])
           .get();
 
       if (orderDoc.exists) {
         final orderData = orderDoc.data() as Map<String, dynamic>;
         final totalAmount = (orderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
 
-        await _firestore.collection('Orders').doc(widget.existingOrderId ?? widget.tableData['currentOrderId']).update({
-          'status': 'paid',
+        await _firestore.collection('Orders').doc(_currentOrderId ?? widget.tableData['currentOrderId']).update({
+          'paymentStatus': 'paid',
           'paymentMethod': paymentMethod,
           'paymentTime': Timestamp.now(),
           'paidAmount': totalAmount,
@@ -3027,6 +3722,18 @@ class _OrderScreenState extends State<OrderScreen> {
           'Tables.${widget.tableNumber}.status': 'available',
           'Tables.${widget.tableNumber}.currentOrderId': FieldValue.delete(),
           'Tables.${widget.tableNumber}.statusTimestamp': FieldValue.delete(),
+        });
+
+        // Clear cart after successful payment
+        await _firestore.collection('carts').doc('table_${widget.tableNumber}').delete();
+
+        // Reset local state
+        setState(() {
+          _currentOrderId = null;
+          _isAddingToExistingOrder = false;
+          _existingOrderItems.clear();
+          _currentOrderStatus = '';
+          _currentPaymentStatus = 'unpaid';
         });
 
         ScaffoldMessenger.of(context).showSnackBar(
@@ -3055,16 +3762,24 @@ class _OrderScreenState extends State<OrderScreen> {
 
 
 
+
+
+
+
+
+
 class ActiveOrdersScreen extends StatefulWidget {
   @override
   _ActiveOrdersScreenState createState() => _ActiveOrdersScreenState();
 }
+
 class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
     with SingleTickerProviderStateMixin {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final Color primaryColor = Color(0xFF1976D2);
   final Color secondaryColor = Color(0xFFE3F2FD);
   late TabController _tabController;
+
   @override
   void initState() {
     super.initState();
@@ -3073,11 +3788,13 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
       setState(() {}); // update UI on tab changes
     });
   }
+
   @override
   void dispose() {
     _tabController.dispose();
     super.dispose();
   }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -3105,8 +3822,8 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
                 isScrollable: false,
                 indicatorColor: primaryColor,
                 indicatorWeight: 3,
-                indicatorSize: TabBarIndicatorSize.label, // fix underline width to label size
-                indicatorPadding: EdgeInsets.zero, // remove horizontal padding to fix error
+                indicatorSize: TabBarIndicatorSize.label,
+                indicatorPadding: EdgeInsets.zero,
                 labelColor: primaryColor,
                 unselectedLabelColor: Colors.grey[600],
                 labelStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
@@ -3133,6 +3850,7 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
       ),
     );
   }
+
   Widget _buildTabItem(IconData icon, String text, int index) {
     final bool isSelected = _tabController.index == index;
     return Tab(
@@ -3158,6 +3876,7 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
       ),
     );
   }
+
   Widget _buildOrdersList(String orderType) {
     return StreamBuilder<QuerySnapshot>(
       stream: _getOrdersStream(orderType),
@@ -3173,12 +3892,18 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
         if (orders.isEmpty) {
           return _buildEmptyState(orderType);
         }
+
+        // Updated to include 'served' status and filter out paid orders
         final pendingOrders =
         orders.where((order) => order['status'] == 'pending').toList();
         final preparingOrders =
         orders.where((order) => order['status'] == 'preparing').toList();
         final preparedOrders =
         orders.where((order) => order['status'] == 'prepared').toList();
+        final servedOrders = orders.where((order) =>
+        order['status'] == 'served' &&
+            (order['paymentStatus'] ?? 'unpaid') != 'paid').toList();
+
         return RefreshIndicator(
           onRefresh: () async {
             setState(() {});
@@ -3191,17 +3916,21 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
                 pendingOrders.length,
                 preparingOrders.length,
                 preparedOrders.length,
+                servedOrders.length,
               ),
               SizedBox(height: 20),
+              if (servedOrders.isNotEmpty) ...[
+                _buildSectionHeader('Served (Unpaid)', servedOrders.length, Colors.blue),
+                ...servedOrders.map((order) => _buildOrderCard(order, false)),
+                SizedBox(height: 16),
+              ],
               if (preparedOrders.isNotEmpty) ...[
-                _buildSectionHeader(
-                    'Ready to Serve', preparedOrders.length, Colors.green),
+                _buildSectionHeader('Ready to Serve', preparedOrders.length, Colors.green),
                 ...preparedOrders.map((order) => _buildOrderCard(order, true)),
                 SizedBox(height: 16),
               ],
               if (preparingOrders.isNotEmpty) ...[
-                _buildSectionHeader(
-                    'Preparing', preparingOrders.length, Colors.orange),
+                _buildSectionHeader('Preparing', preparingOrders.length, Colors.orange),
                 ...preparingOrders.map((order) => _buildOrderCard(order, false)),
                 SizedBox(height: 16),
               ],
@@ -3215,12 +3944,14 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
       },
     );
   }
+
   Stream<QuerySnapshot> _getOrdersStream(String orderType) {
     try {
       Query query = _firestore
           .collection('Orders')
           .where('branchId', isEqualTo: 'Old_Airport')
-          .where('status', whereIn: ['pending', 'preparing', 'prepared']);
+          .where('status', whereIn: ['pending', 'preparing', 'prepared', 'served']);
+
       if (orderType != 'all') {
         query = query.where('Order_type', isEqualTo: orderType);
       }
@@ -3229,26 +3960,32 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
       return Stream.empty();
     }
   }
-  Widget _buildSummaryCards(int pending, int preparing, int prepared) {
+
+  Widget _buildSummaryCards(int pending, int preparing, int prepared, int served) {
     return Row(
       children: [
         Expanded(
           child: _buildSummaryCard('New', pending, Colors.red, Icons.fiber_new),
         ),
-        SizedBox(width: 12),
+        SizedBox(width: 8),
         Expanded(
           child: _buildSummaryCard('Preparing', preparing, Colors.orange, Icons.restaurant),
         ),
-        SizedBox(width: 12),
+        SizedBox(width: 8),
         Expanded(
           child: _buildSummaryCard('Ready', prepared, Colors.green, Icons.check_circle),
+        ),
+        SizedBox(width: 8),
+        Expanded(
+          child: _buildSummaryCard('Served', served, Colors.blue, Icons.room_service),
         ),
       ],
     );
   }
+
   Widget _buildSummaryCard(String title, int count, Color color, IconData icon) {
     return Container(
-      padding: EdgeInsets.all(16),
+      padding: EdgeInsets.all(12),
       decoration: BoxDecoration(
         gradient: LinearGradient(colors: [secondaryColor, Colors.white]),
         borderRadius: BorderRadius.circular(12),
@@ -3256,17 +3993,18 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
       ),
       child: Column(
         children: [
-          Icon(icon, color: color, size: 24),
-          SizedBox(height: 8),
+          Icon(icon, color: color, size: 20),
+          SizedBox(height: 6),
           Text(
             count.toString(),
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: color),
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: color),
           ),
-          Text(title, style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.w500)),
+          Text(title, style: TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.w500)),
         ],
       ),
     );
   }
+
   Widget _buildSectionHeader(String title, int count, Color color) {
     return Container(
       margin: EdgeInsets.only(bottom: 12),
@@ -3296,17 +4034,22 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
       ),
     );
   }
+
   Widget _buildOrderCard(QueryDocumentSnapshot order, bool isPriority) {
     final orderData = order.data() as Map<String, dynamic>;
     final orderType = orderData['Order_type']?.toString() ?? 'dine_in';
     final tableNumber = orderData['tableNumber']?.toString();
     final customerName = orderData['customerName']?.toString();
     final status = orderData['status']?.toString() ?? 'unknown';
+    final paymentStatus = orderData['paymentStatus']?.toString() ?? 'unpaid';
     final dailyOrderNumber = orderData['dailyOrderNumber']?.toString() ?? '';
     final totalAmount = (orderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
     final timestamp = orderData['timestamp'] as Timestamp?;
     final items = List<Map<String, dynamic>>.from(orderData['items'] ?? []);
+
     final statusColor = _getFirestoreStatusColor(status);
+    final paymentStatusColor = paymentStatus == 'paid' ? Colors.green : Colors.red;
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -3348,7 +4091,7 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
                       ),
                       child: Icon(
                         orderType == 'takeaway' ? Icons.shopping_bag : Icons.table_restaurant,
-                        color: orderType == 'takeaway' ? Colors.orange : Colors.blue,
+                        color: Colors.white,
                         size: 20,
                       ),
                     ),
@@ -3389,15 +4132,32 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
                         ],
                       ),
                     ),
-                    Container(
-                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: statusColor.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: statusColor, width: 1),
-                      ),
-                      child: Text(status.toUpperCase(),
-                          style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.bold)),
+                    Column(
+                      children: [
+                        Container(
+                          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: statusColor.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: statusColor, width: 1),
+                          ),
+                          child: Text(status.toUpperCase(),
+                              style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.bold)),
+                        ),
+                        if (status == 'served') ...[
+                          SizedBox(height: 4),
+                          Container(
+                            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: paymentStatusColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(15),
+                              border: Border.all(color: paymentStatusColor, width: 1),
+                            ),
+                            child: Text(paymentStatus.toUpperCase(),
+                                style: TextStyle(color: paymentStatusColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
+                      ],
                     ),
                   ],
                 ),
@@ -3435,7 +4195,7 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
                       Text(timestamp != null ? _formatTime(timestamp.toDate()) : 'Unknown',
                           style: TextStyle(fontSize: 12, color: Colors.grey)),
                     ]),
-                    Text('\$${totalAmount.toStringAsFixed(2)}',
+                    Text('QAR ${totalAmount.toStringAsFixed(2)}',
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: primaryColor)),
                   ],
                 )
@@ -3446,6 +4206,7 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
       ),
     );
   }
+
   Widget _buildEmptyState(String orderType) {
     String message;
     IconData icon;
@@ -3481,6 +4242,7 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
       ),
     );
   }
+
   Widget _buildErrorState(String error) {
     return Center(
       child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -3494,6 +4256,7 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
       ]),
     );
   }
+
   Widget _buildLoadingState() {
     return Center(
       child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -3503,8 +4266,11 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
       ]),
     );
   }
+
   Color _getFirestoreStatusColor(String status) {
     switch (status.toLowerCase()) {
+      case 'served':
+        return Colors.blue;
       case 'prepared':
         return Colors.green;
       case 'preparing':
@@ -3515,6 +4281,7 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
         return Colors.grey;
     }
   }
+
   String _formatTime(DateTime dateTime) {
     final now = DateTime.now();
     final diff = now.difference(dateTime);
@@ -3526,6 +4293,7 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
       return '${dateTime.day}/${dateTime.month}';
     }
   }
+
   Widget _buildCompletedOrdersList() {
     final now = DateTime.now();
     final startOfDay = DateTime(now.year, now.month, now.day);
@@ -3533,7 +4301,7 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
       stream: _firestore
           .collection('Orders')
           .where('branchId', isEqualTo: 'Old_Airport')
-          .where('status', isEqualTo: 'paid')
+          .where('paymentStatus', isEqualTo: 'paid') // Changed to filter by paymentStatus
           .where('paymentTime', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
           .orderBy('paymentTime', descending: true)
           .snapshots(),
@@ -3560,6 +4328,7 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
             final paymentMethod = orderData['paymentMethod']?.toString() ?? 'N/A';
             final paymentTime = orderData['paymentTime'] as Timestamp?;
             final items = List<Map<String, dynamic>>.from(orderData['items'] ?? []);
+
             return GestureDetector(
               onTap: () {
                 Navigator.push(
@@ -3586,7 +4355,15 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
                         Text('Order #$dailyOrderNumber',
                             style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: primaryColor)),
                         Spacer(),
-                        Icon(Icons.arrow_forward_ios, color: Colors.grey, size: 18),
+                        Container(
+                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.green,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text('PAID',
+                              style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                        ),
                       ]),
                       SizedBox(height: 6),
                       Row(
@@ -3626,7 +4403,7 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text('Total', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                          Text('\$${totalAmount.toStringAsFixed(2)}',
+                          Text('QAR ${totalAmount.toStringAsFixed(2)}',
                               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: primaryColor)),
                         ],
                       ),
@@ -3640,23 +4417,12 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
       },
     );
   }
+
   String _formatDateTime(DateTime dt) {
     return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')} '
         '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 }
-// Dummy placeholder for OrderDetailScreen to avoid error
-
-
-// Dummy placeholder for OrderDetailScreen to avoid error
-
-
-
-
-
-
-
-// Placeholder OrderDetailScreen, replace with your actual detail screen widget
 
 
 
@@ -3673,13 +4439,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   final Color primaryColor = Color(0xFF1976D2);
   final Color secondaryColor = Color(0xFFE3F2FD);
   bool _isUpdating = false;
-  String _selectedTab = 'all'; // all, dine_in, takeaway
 
   @override
   Widget build(BuildContext context) {
     final orderData = widget.order.data() as Map<String, dynamic>;
     final items = List<Map<String, dynamic>>.from(orderData['items'] ?? []);
     final status = orderData['status']?.toString() ?? 'unknown';
+    final paymentStatus = orderData['paymentStatus']?.toString() ?? 'unpaid';
     final orderType = orderData['Order_type']?.toString() ?? 'dine_in';
     final tableNumber = orderData['tableNumber']?.toString();
     final dailyOrderNumber = orderData['dailyOrderNumber']?.toString() ?? '';
@@ -3736,7 +4502,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Order Number and Type
+                    // Order Number and Status
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -3773,25 +4539,52 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                             ),
                           ],
                         ),
-                        // Status Badge
-                        Container(
-                          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: _getStatusColor(status).withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: _getStatusColor(status),
-                              width: 2,
+                        Column(
+                          children: [
+                            // Order Status Badge
+                            Container(
+                              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: _getStatusColor(status).withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: _getStatusColor(status),
+                                  width: 2,
+                                ),
+                              ),
+                              child: Text(
+                                status.toUpperCase(),
+                                style: TextStyle(
+                                  color: _getStatusColor(status),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
+                              ),
                             ),
-                          ),
-                          child: Text(
-                            status.toUpperCase(),
-                            style: TextStyle(
-                              color: _getStatusColor(status),
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
-                          ),
+                            // Payment Status Badge
+                            if (status == 'served') ...[
+                              SizedBox(height: 8),
+                              Container(
+                                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: (paymentStatus == 'paid' ? Colors.green : Colors.red).withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: paymentStatus == 'paid' ? Colors.green : Colors.red,
+                                    width: 2,
+                                  ),
+                                ),
+                                child: Text(
+                                  paymentStatus.toUpperCase(),
+                                  style: TextStyle(
+                                    color: paymentStatus == 'paid' ? Colors.green : Colors.red,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ],
                     ),
@@ -3919,6 +4712,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                           final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
                           final price = (item['price'] as num?)?.toDouble() ?? 0.0;
                           final total = price * quantity;
+                          final specialInstructions = item['specialInstructions']?.toString();
 
                           return Container(
                             margin: EdgeInsets.only(bottom: 12),
@@ -3965,12 +4759,23 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                                       ),
                                       SizedBox(height: 4),
                                       Text(
-                                        '\$${price.toStringAsFixed(2)} each',
+                                        'QAR ${price.toStringAsFixed(2)} each',
                                         style: TextStyle(
                                           color: Colors.grey[600],
                                           fontSize: 14,
                                         ),
                                       ),
+                                      if (specialInstructions != null && specialInstructions.isNotEmpty) ...[
+                                        SizedBox(height: 4),
+                                        Text(
+                                          'Special: $specialInstructions',
+                                          style: TextStyle(
+                                            color: Colors.orange[700],
+                                            fontSize: 12,
+                                            fontStyle: FontStyle.italic,
+                                          ),
+                                        ),
+                                      ],
                                     ],
                                   ),
                                 ),
@@ -3980,7 +4785,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                                   crossAxisAlignment: CrossAxisAlignment.end,
                                   children: [
                                     Text(
-                                      '\$${total.toStringAsFixed(2)}',
+                                      'QAR ${total.toStringAsFixed(2)}',
                                       style: TextStyle(
                                         fontWeight: FontWeight.bold,
                                         fontSize: 16,
@@ -4017,7 +4822,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                                   style: TextStyle(fontSize: 16),
                                 ),
                                 Text(
-                                  '\$${subtotal.toStringAsFixed(2)}',
+                                  'QAR ${subtotal.toStringAsFixed(2)}',
                                   style: TextStyle(fontSize: 16),
                                 ),
                               ],
@@ -4036,7 +4841,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                                 ),
                               ),
                               Text(
-                                '\$${totalAmount.toStringAsFixed(2)}',
+                                'QAR ${totalAmount.toStringAsFixed(2)}',
                                 style: TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
@@ -4056,9 +4861,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           ],
         ),
       ),
-
       // Action Buttons
-      bottomNavigationBar: _buildActionButtons(status, orderType),
+      bottomNavigationBar: _buildActionButtons(status, paymentStatus, orderType),
     );
   }
 
@@ -4097,7 +4901,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     );
   }
 
-  Widget? _buildActionButtons(String status, String orderType) {
+  Widget? _buildActionButtons(String status, String paymentStatus, String orderType) {
     return Container(
       padding: EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -4235,7 +5039,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           ],
 
           if (status == 'prepared') ...[
-            // Mark as Served/Picked Up button
+            // Mark as Served button
             ElevatedButton(
               onPressed: _isUpdating ? null : () => _markAsServed(orderType),
               style: ElevatedButton.styleFrom(
@@ -4251,7 +5055,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   : Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.delivery_dining),
+                  Icon(Icons.room_service),
                   SizedBox(width: 8),
                   Text(
                     orderType == 'takeaway' ? 'Mark as Picked Up' : 'Mark as Served',
@@ -4294,24 +5098,112 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             ),
           ],
 
-          // Show status info for completed orders
-          if (['delivered', 'picked_up', 'cancelled'].contains(status)) ...[
+          if (status == 'served') ...[
+            if (paymentStatus == 'unpaid') ...[
+              // Mark as Paid button
+              ElevatedButton(
+                onPressed: _isUpdating ? null : _showPaymentOptions,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  minimumSize: Size(double.infinity, 50),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: _isUpdating
+                    ? CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                    : Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.payment),
+                    SizedBox(width: 8),
+                    Text(
+                      'Mark as Paid',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(height: 12),
+            ],
+            // Return to Prepared button
+            ElevatedButton(
+              onPressed: _isUpdating ? null : _returnToPrepared,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green[700],
+                foregroundColor: Colors.white,
+                minimumSize: Size(double.infinity, 50),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: _isUpdating
+                  ? CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                  : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.undo),
+                  SizedBox(width: 8),
+                  Text(
+                    'Return to Prepared',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // Show status info for paid orders
+          if (paymentStatus == 'paid') ...[
             Container(
               padding: EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: _getStatusColor(status).withOpacity(0.1),
+                color: Colors.green.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: _getStatusColor(status).withOpacity(0.3)),
+                border: Border.all(color: Colors.green.withOpacity(0.3)),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(_getStatusIcon(status), color: _getStatusColor(status)),
+                  Icon(Icons.check_circle, color: Colors.green),
                   SizedBox(width: 8),
                   Text(
-                    _getStatusMessage(status, orderType),
+                    'Order has been paid',
                     style: TextStyle(
-                      color: _getStatusColor(status),
+                      color: Colors.green,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // Show status info for cancelled orders
+          if (status == 'cancelled') ...[
+            Container(
+              padding: EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.red.withOpacity(0.3)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.cancel, color: Colors.red),
+                  SizedBox(width: 8),
+                  Text(
+                    'Order was cancelled',
+                    style: TextStyle(
+                      color: Colors.red,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -4326,8 +5218,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
   Color _getStatusColor(String status) {
     switch (status.toLowerCase()) {
-      case 'delivered':
-      case 'picked_up':
+      case 'served':
         return Colors.blue;
       case 'prepared':
         return Colors.green;
@@ -4341,32 +5232,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         return Colors.red;
       default:
         return Colors.grey;
-    }
-  }
-
-  IconData _getStatusIcon(String status) {
-    switch (status.toLowerCase()) {
-      case 'delivered':
-        return Icons.check_circle;
-      case 'picked_up':
-        return Icons.shopping_bag_outlined;
-      case 'cancelled':
-        return Icons.cancel;
-      default:
-        return Icons.info;
-    }
-  }
-
-  String _getStatusMessage(String status, String orderType) {
-    switch (status.toLowerCase()) {
-      case 'delivered':
-        return 'Order has been served';
-      case 'picked_up':
-        return 'Order has been picked up';
-      case 'cancelled':
-        return 'Order was cancelled';
-      default:
-        return 'Order completed';
     }
   }
 
@@ -4449,12 +5314,14 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     setState(() => _isUpdating = true);
 
     try {
-      final newStatus = orderType == 'takeaway' ? 'picked_up' : 'delivered';
-
+      // Changed: Set status to 'served' and paymentStatus to 'unpaid'
       await FirebaseFirestore.instance
           .collection('Orders')
           .doc(widget.order.id)
-          .update({'status': newStatus});
+          .update({
+        'status': 'served',
+        'paymentStatus': 'unpaid',
+      });
 
       // Update table status only for dine-in orders
       if (orderType == 'dine_in') {
@@ -4464,7 +5331,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         if (tableNumber != null) {
           final tableUpdate = <String, dynamic>{};
           tableUpdate['Tables.$tableNumber.status'] = 'occupied';
-          tableUpdate['Tables.$tableNumber.currentOrderId'] = '';
 
           await FirebaseFirestore.instance
               .collection('Branch')
@@ -4631,1267 +5497,183 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       setState(() => _isUpdating = false);
     }
   }
-}
 
+  Future<void> _returnToPrepared() async {
+    setState(() => _isUpdating = true);
 
+    try {
+      await FirebaseFirestore.instance
+          .collection('Orders')
+          .doc(widget.order.id)
+          .update({'status': 'prepared'});
 
-
-class MenuBrowserScreen extends StatefulWidget {
-  @override
-  _MenuBrowserScreenState createState() => _MenuBrowserScreenState();
-}
-
-class _MenuBrowserScreenState extends State<MenuBrowserScreen>
-    with TickerProviderStateMixin {
-  late TabController _tabController;
-  late AnimationController _fadeController;
-  late Animation<double> _fadeAnimation;
-
-  final Color primaryColor = Color(0xFF1976D2);
-  final Color secondaryColor = Color(0xFFE3F2FD);
-
-  @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-    _fadeController = AnimationController(
-      duration: Duration(milliseconds: 600),
-      vsync: this,
-    );
-    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _fadeController, curve: Curves.easeInOut),
-    );
-    _fadeController.forward();
-  }
-
-  @override
-  void dispose() {
-    _tabController.dispose();
-    _fadeController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final primaryColor = Color(0xFF1976D2);
-
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        backgroundColor: Colors.grey[50],
-        body: NestedScrollView(
-          headerSliverBuilder: (context, innerBoxIsScrolled) => [
-            SliverAppBar(
-              pinned: true,
-              expandedHeight: 140.0,
-              backgroundColor: primaryColor,
-              automaticallyImplyLeading: true,
-              iconTheme: IconThemeData(color: Colors.white),
-              flexibleSpace: FlexibleSpaceBar(
-                titlePadding: EdgeInsets.only(left: 60, bottom: 50),
-                title: Text(
-                  'Menu Browser',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 22,
-                    color: Colors.white,
-                  ),
-                ),
-                background: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [primaryColor, primaryColor.withOpacity(0.7)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                  ),
-                  child: Stack(
-                    children: [
-                      Positioned(
-                        right: -80,
-                        top: -80,
-                        child: Container(
-                          width: 200,
-                          height: 200,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.white.withOpacity(0.1),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              bottom: TabBar(
-                labelColor: primaryColor,
-                unselectedLabelColor: Colors.grey[600],
-                indicatorColor: primaryColor,
-                indicatorWeight: 3,
-                labelStyle: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                ),
-                unselectedLabelStyle: TextStyle(
-                  fontWeight: FontWeight.w500,
-                  fontSize: 15,
-                ),
-                tabs: [
-                  Tab(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.category_rounded, size: 20),
-                        SizedBox(width: 8),
-                        Text('Categories'),
-                      ],
-                    ),
-                  ),
-                  Tab(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.restaurant_menu_rounded, size: 20),
-                        SizedBox(width: 8),
-                        Text('All Items'),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-          body: FadeTransition(
-            opacity: _fadeAnimation,
-            child: TabBarView(
-              children: [
-                CategoriesTab(),
-                AllMenuItemsTab(),
-              ],
-            ),
-          ),
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Order returned to prepared!'),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
         ),
-      ),
-    );
+      );
+
+      Navigator.pop(context);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error updating order: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      setState(() => _isUpdating = false);
+    }
   }
 
-}
-
-class CategoriesTab extends StatefulWidget {
-  @override
-  _CategoriesTabState createState() => _CategoriesTabState();
-}
-
-class _CategoriesTabState extends State<CategoriesTab>
-    with AutomaticKeepAliveClientMixin {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final Color primaryColor = Color(0xFF1976D2);
-
-  @override
-  bool get wantKeepAlive => true;
-
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-    return Container(
-      padding: EdgeInsets.all(16),
-      child: StreamBuilder<QuerySnapshot>(
-        stream: _firestore
-            .collection('menu_categories')
-            .where('isActive', isEqualTo: true)
-            .where('branchId', isEqualTo: 'Old_Airport')
-            .orderBy('sortOrder')
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return _buildErrorState('Error loading categories');
-          }
-
-          if (!snapshot.hasData) {
-            return _buildLoadingState();
-          }
-
-          final categories = snapshot.data!.docs;
-
-          if (categories.isEmpty) {
-            return _buildEmptyState(
-              'No Categories Available',
-              'Categories will appear here when added',
-              Icons.category_outlined,
-            );
-          }
-
-          return GridView.builder(
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: MediaQuery.of(context).size.width > 600 ? 3 : 2,
-              crossAxisSpacing: 16,
-              mainAxisSpacing: 16,
-              childAspectRatio: 0.85,
-            ),
-            itemCount: categories.length,
-            itemBuilder: (context, index) {
-              final category = categories[index];
-              return _buildCategoryCard(context, category, index);
-            },
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildCategoryCard(BuildContext context, QueryDocumentSnapshot category, int index) {
-    final categoryData = category.data() as Map<String, dynamic>;
-    final name = categoryData['name']?.toString() ?? 'Unknown Category';
-    final imageUrl = categoryData['imageUrl']?.toString();
-    final description = categoryData['description']?.toString() ?? '';
-
-    return Hero(
-      tag: 'category_$index',
-      child: GestureDetector(
-        onTap: () {
-          HapticFeedback.lightImpact();
-          Navigator.push(
-            context,
-            PageRouteBuilder(
-              pageBuilder: (context, animation, secondaryAnimation) =>
-                  CategoryItemsScreen(category: category),
-              transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                return SlideTransition(
-                  position: animation.drive(
-                    Tween(begin: Offset(1.0, 0.0), end: Offset.zero).chain(
-                      CurveTween(curve: Curves.easeInOut),
-                    ),
-                  ),
-                  child: child,
-                );
-              },
-            ),
-          );
-        },
-        child: Container(
+  void _showPaymentOptions() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.08),
-                blurRadius: 15,
-                offset: Offset(0, 4),
-              ),
-            ],
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(20),
+              topRight: Radius.circular(20),
+            ),
           ),
+          padding: EdgeInsets.all(20),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              // Image Section
-              Expanded(
-                flex: 3,
-                child: Container(
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.only(
-                      topLeft: Radius.circular(20),
-                      topRight: Radius.circular(20),
-                    ),
-                    gradient: LinearGradient(
-                      colors: [
-                        primaryColor.withOpacity(0.1),
-                        primaryColor.withOpacity(0.05),
-                      ],
-                    ),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.only(
-                      topLeft: Radius.circular(20),
-                      topRight: Radius.circular(20),
-                    ),
-                    child: imageUrl != null
-                        ? Image.network(
-                      imageUrl,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) =>
-                          _buildCategoryPlaceholder(),
-                    )
-                        : _buildCategoryPlaceholder(),
-                  ),
+              Text(
+                'Select Payment Method',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: primaryColor,
                 ),
               ),
-
-              // Content Section
-              Expanded(
-                flex: 2,
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            name,
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                              color: Colors.grey[800],
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          if (description.isNotEmpty) ...[
-                            SizedBox(height: 4),
+              SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => _processPayment('cash'),
+                      child: Container(
+                        padding: EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.green[50],
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.green),
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(Icons.money, size: 40, color: Colors.green),
+                            SizedBox(height: 8),
                             Text(
-                              description,
+                              'Cash',
                               style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green,
                               ),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
                             ),
                           ],
-                        ],
+                        ),
                       ),
-
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            'View Items',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: primaryColor,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          Icon(
-                            Icons.arrow_forward_ios_rounded,
-                            size: 14,
-                            color: primaryColor,
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCategoryPlaceholder() {
-    return Container(
-      child: Center(
-        child: Icon(
-          Icons.category_rounded,
-          size: 50,
-          color: primaryColor.withOpacity(0.6),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLoadingState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          CircularProgressIndicator(color: primaryColor),
-          SizedBox(height: 16),
-          Text(
-            'Loading Categories...',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.grey[600],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildErrorState(String message) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.error_outline, size: 64, color: Colors.red[300]),
-          SizedBox(height: 16),
-          Text(
-            message,
-            style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmptyState(String title, String subtitle, IconData icon) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 80, color: Colors.grey[300]),
-          SizedBox(height: 16),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey[700],
-            ),
-          ),
-          SizedBox(height: 8),
-          Text(
-            subtitle,
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey[500],
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class CategoryItemsScreen extends StatefulWidget {
-  final QueryDocumentSnapshot category;
-
-  CategoryItemsScreen({required this.category});
-
-  @override
-  _CategoryItemsScreenState createState() => _CategoryItemsScreenState();
-}
-
-class _CategoryItemsScreenState extends State<CategoryItemsScreen>
-    with TickerProviderStateMixin {
-  final Color primaryColor = Color(0xFF1976D2);
-  late AnimationController _listAnimationController;
-  late Animation<double> _listAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _listAnimationController = AnimationController(
-      duration: Duration(milliseconds: 800),
-      vsync: this,
-    );
-    _listAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _listAnimationController,
-        curve: Curves.easeOutQuart,
-      ),
-    );
-    _listAnimationController.forward();
-  }
-
-  @override
-  void dispose() {
-    _listAnimationController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final categoryData = widget.category.data() as Map<String, dynamic>;
-    final categoryName = categoryData['name']?.toString() ?? 'Category';
-
-    return Scaffold(
-      backgroundColor: Colors.grey[50],
-      body: CustomScrollView(
-        slivers: [
-          SliverAppBar(
-            pinned: true,
-            expandedHeight: 120.0,
-            backgroundColor: primaryColor,
-            iconTheme: IconThemeData(color: Colors.white),
-            flexibleSpace: FlexibleSpaceBar(
-              titlePadding: EdgeInsets.only(left: 60, bottom: 16),
-              title: Text(
-                categoryName,
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 20,
-                  color: Colors.white,
-                ),
-              ),
-              background: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [primaryColor, primaryColor.withOpacity(0.7)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          SliverPadding(
-            padding: EdgeInsets.all(16),
-            sliver: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('menu_items')
-                  .where('categoryId', isEqualTo: categoryName)
-                  .where('branchId', isEqualTo: 'Old_Airport')
-                  .where('isAvailable', isEqualTo: true)
-                  .orderBy('sortOrder')
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return SliverToBoxAdapter(
-                    child: _buildErrorState('Error loading items'),
-                  );
-                }
-
-                if (!snapshot.hasData) {
-                  return SliverToBoxAdapter(
-                    child: _buildLoadingState(),
-                  );
-                }
-
-                final items = snapshot.data!.docs;
-
-                if (items.isEmpty) {
-                  return SliverToBoxAdapter(
-                    child: _buildEmptyState(
-                      'No Items Available',
-                      'Items in this category will appear here',
-                      Icons.restaurant_menu_outlined,
                     ),
-                  );
-                }
-
-                return SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                        (context, index) {
-                      return FadeTransition(
-                        opacity: _listAnimation,
-                        child: SlideTransition(
-                          position: Tween<Offset>(
-                            begin: Offset(0, 0.3),
-                            end: Offset.zero,
-                          ).animate(
-                            CurvedAnimation(
-                              parent: _listAnimationController,
-                              curve: Interval(
-                                index * 0.1,
-                                1.0,
-                                curve: Curves.easeOutQuart,
-                              ),
-                            ),
-                          ),
-                          child: _buildMenuItem(items[index]),
-                        ),
-                      );
-                    },
-                    childCount: items.length,
                   ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMenuItem(QueryDocumentSnapshot item) {
-    final itemData = item.data() as Map<String, dynamic>;
-    final name = itemData['name']?.toString() ?? 'Unknown Item';
-    final description = itemData['description']?.toString() ?? '';
-    final price = (itemData['price'] as num?)?.toDouble() ?? 0.0;
-    final estimatedTime = itemData['EstimatedTime']?.toString() ?? '';
-    final imageUrl = itemData['imageUrl']?.toString();
-    final isPopular = itemData['isPopular'] ?? false;
-
-    return Container(
-      margin: EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Row(
-          children: [
-            // Image Section
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      primaryColor.withOpacity(0.1),
-                      primaryColor.withOpacity(0.05),
-                    ],
-                  ),
-                ),
-                child: imageUrl != null
-                    ? Image.network(
-                  imageUrl,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) =>
-                      _buildMenuPlaceholder(),
-                )
-                    : _buildMenuPlaceholder(),
-              ),
-            ),
-
-            SizedBox(width: 16),
-
-            // Content Section
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          name,
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                            color: Colors.grey[800],
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      if (isPopular)
-                        Container(
-                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.amber[100],
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.star, size: 12, color: Colors.amber[700]),
-                              SizedBox(width: 2),
-                              Text(
-                                'Popular',
-                                style: TextStyle(
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.amber[700],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                    ],
-                  ),
-
-                  if (description.isNotEmpty) ...[
-                    SizedBox(height: 4),
-                    Text(
-                      description,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey[600],
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-
-                  SizedBox(height: 8),
-
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '\$${price.toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 18,
-                              color: primaryColor,
-                            ),
-                          ),
-                          if (estimatedTime.isNotEmpty)
-                            Row(
-                              children: [
-                                Icon(Icons.access_time, size: 12, color: Colors.grey[500]),
-                                SizedBox(width: 4),
-                                Text(
-                                  '$estimatedTime mins',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey[500],
-                                  ),
-                                ),
-                              ],
-                            ),
-                        ],
-                      ),
-
-                      Container(
-                        padding: EdgeInsets.all(8),
+                  SizedBox(width: 16),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => _processPayment('card'),
+                      child: Container(
+                        padding: EdgeInsets.all(16),
                         decoration: BoxDecoration(
-                          color: primaryColor.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
+                          color: Colors.blue[50],
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.blue),
                         ),
-                        child: Icon(
-                          Icons.info_outline,
-                          color: primaryColor,
-                          size: 20,
+                        child: Column(
+                          children: [
+                            Icon(Icons.credit_card, size: 40, color: Colors.blue),
+                            SizedBox(height: 8),
+                            Text(
+                              'Card',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blue,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
+                    ),
                   ),
                 ],
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMenuPlaceholder() {
-    return Container(
-      child: Center(
-        child: Icon(
-          Icons.restaurant_menu,
-          size: 32,
-          color: primaryColor.withOpacity(0.6),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLoadingState() {
-    return Container(
-      height: 300,
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(color: primaryColor),
-            SizedBox(height: 16),
-            Text(
-              'Loading Items...',
-              style: TextStyle(
-                fontSize: 16,
-                color: Colors.grey[600],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildErrorState(String message) {
-    return Container(
-      height: 300,
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.error_outline, size: 64, color: Colors.red[300]),
-            SizedBox(height: 16),
-            Text(
-              message,
-              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildEmptyState(String title, String subtitle, IconData icon) {
-    return Container(
-      height: 300,
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 80, color: Colors.grey[300]),
-            SizedBox(height: 16),
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[700],
-              ),
-            ),
-            SizedBox(height: 8),
-            Text(
-              subtitle,
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey[500],
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class AllMenuItemsTab extends StatefulWidget {
-  @override
-  _AllMenuItemsTabState createState() => _AllMenuItemsTabState();
-}
-
-class _AllMenuItemsTabState extends State<AllMenuItemsTab>
-    with AutomaticKeepAliveClientMixin {
-  final Color primaryColor = Color(0xFF1976D2);
-  final TextEditingController _searchController = TextEditingController();
-  String _searchQuery = '';
-  String _sortBy = 'name';
-
-  @override
-  bool get wantKeepAlive => true;
-
-  @override
-  void initState() {
-    super.initState();
-    _searchController.addListener(() {
-      setState(() {
-        _searchQuery = _searchController.text.toLowerCase();
-      });
-    });
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-    return Container(
-      padding: EdgeInsets.all(16),
-      child: Column(
-        children: [
-          // Search and Filter Section
-          Row(
-            children: [
-              Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 10,
-                        offset: Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      hintText: 'Search all items...',
-                      hintStyle: TextStyle(color: Colors.grey[500]),
-                      prefixIcon: Icon(Icons.search, color: primaryColor),
-                      suffixIcon: _searchQuery.isNotEmpty
-                          ? IconButton(
-                        icon: Icon(Icons.clear, color: Colors.grey),
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() {
-                            _searchQuery = '';
-                          });
-                        },
-                      )
-                          : null,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
-                      filled: true,
-                      fillColor: Colors.white,
-                    ),
-                  ),
-                ),
-              ),
-              SizedBox(width: 12),
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 10,
-                      offset: Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: PopupMenuButton<String>(
-                  icon: Icon(Icons.sort, color: primaryColor),
-                  onSelected: (value) {
-                    setState(() {
-                      _sortBy = value;
-                    });
-                  },
-                  itemBuilder: (context) => [
-                    PopupMenuItem(
-                      value: 'name',
-                      child: Row(
-                        children: [
-                          Icon(Icons.sort_by_alpha, size: 18),
-                          SizedBox(width: 8),
-                          Text('Name'),
-                        ],
-                      ),
-                    ),
-                    PopupMenuItem(
-                      value: 'price',
-                      child: Row(
-                        children: [
-                          Icon(Icons.attach_money, size: 18),
-                          SizedBox(width: 8),
-                          Text('Price'),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+              SizedBox(height: 20),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text('Cancel'),
               ),
             ],
           ),
-
-          SizedBox(height: 16),
-
-          // Items List
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('menu_items')
-                  .where('isAvailable', isEqualTo: true)
-                  .where('branchId', isEqualTo: 'Old_Airport')
-                  .orderBy(_sortBy)
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return _buildErrorState('Error loading menu items');
-                }
-
-                if (!snapshot.hasData) {
-                  return _buildLoadingState();
-                }
-
-                final allItems = snapshot.data!.docs;
-
-                // Apply search filter
-                final filteredItems = allItems.where((item) {
-                  if (_searchQuery.isEmpty) return true;
-
-                  final itemData = item.data() as Map<String, dynamic>;
-                  final name = itemData['name']?.toString().toLowerCase() ?? '';
-                  final description = itemData['description']?.toString().toLowerCase() ?? '';
-
-                  return name.contains(_searchQuery) || description.contains(_searchQuery);
-                }).toList();
-
-                if (filteredItems.isEmpty) {
-                  return _buildEmptyState(
-                    _searchQuery.isNotEmpty ? 'No items found' : 'No Menu Items',
-                    _searchQuery.isNotEmpty
-                        ? 'Try different search terms'
-                        : 'Menu items will appear here',
-                    Icons.restaurant_menu_outlined,
-                  );
-                }
-
-                return ListView.builder(
-                  itemCount: filteredItems.length,
-                  itemBuilder: (context, index) {
-                    return _buildMenuItem(filteredItems[index]);
-                  },
-                );
-              },
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
-  Widget _buildMenuItem(QueryDocumentSnapshot item) {
-    final itemData = item.data() as Map<String, dynamic>;
-    final name = itemData['name']?.toString() ?? 'Unknown Item';
-    final description = itemData['description']?.toString() ?? '';
-    final price = (itemData['price'] as num?)?.toDouble() ?? 0.0;
-    final estimatedTime = itemData['EstimatedTime']?.toString() ?? '';
-    final imageUrl = itemData['imageUrl']?.toString();
-    final isPopular = itemData['isPopular'] ?? false;
-    final categoryId = itemData['categoryId']?.toString() ?? '';
+  Future<void> _processPayment(String paymentMethod) async {
+    Navigator.pop(context);
+    setState(() => _isUpdating = true);
 
-    return Container(
-      margin: EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Row(
-          children: [
-            // Image Section
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      primaryColor.withOpacity(0.1),
-                      primaryColor.withOpacity(0.05),
-                    ],
-                  ),
-                ),
-                child: imageUrl != null
-                    ? Image.network(
-                  imageUrl,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) =>
-                      _buildMenuPlaceholder(),
-                )
-                    : _buildMenuPlaceholder(),
-              ),
-            ),
+    try {
+      final orderData = widget.order.data() as Map<String, dynamic>;
+      final orderType = orderData['Order_type']?.toString() ?? 'dine_in';
+      final totalAmount = (orderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
 
-            SizedBox(width: 16),
+      await FirebaseFirestore.instance.collection('Orders').doc(widget.order.id).update({
+        'paymentStatus': 'paid',
+        'paymentMethod': paymentMethod,
+        'paymentTime': Timestamp.now(),
+        'paidAmount': totalAmount,
+      });
 
-            // Content Section
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          name,
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                            color: Colors.grey[800],
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      if (isPopular)
-                        Container(
-                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.amber[100],
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.star, size: 10, color: Colors.amber[700]),
-                              SizedBox(width: 2),
-                              Text(
-                                'Popular',
-                                style: TextStyle(
-                                  fontSize: 8,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.amber[700],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                    ],
-                  ),
+      // Update table status only for dine-in orders
+      if (orderType == 'dine_in') {
+        final tableNumber = orderData['tableNumber']?.toString();
+        if (tableNumber != null) {
+          await FirebaseFirestore.instance.collection('Branch').doc('Old_Airport').update({
+            'Tables.$tableNumber.status': 'available',
+            'Tables.$tableNumber.currentOrderId': FieldValue.delete(),
+            'Tables.$tableNumber.statusTimestamp': FieldValue.delete(),
+          });
+        }
+      }
 
-                  if (categoryId.isNotEmpty) ...[
-                    SizedBox(height: 2),
-                    Container(
-                      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: primaryColor.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        categoryId,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: primaryColor,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-
-                  if (description.isNotEmpty) ...[
-                    SizedBox(height: 4),
-                    Text(
-                      description,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[600],
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-
-                  SizedBox(height: 8),
-
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '\$${price.toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                              color: primaryColor,
-                            ),
-                          ),
-                          if (estimatedTime.isNotEmpty)
-                            Row(
-                              children: [
-                                Icon(Icons.access_time, size: 12, color: Colors.grey[500]),
-                                SizedBox(width: 4),
-                                Text(
-                                  '$estimatedTime mins',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.grey[500],
-                                  ),
-                                ),
-                              ],
-                            ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Payment processed successfully with ${paymentMethod.toUpperCase()}!'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 3),
         ),
-      ),
-    );
-  }
+      );
 
-  Widget _buildMenuPlaceholder() {
-    return Container(
-      child: Center(
-        child: Icon(
-          Icons.restaurant_menu,
-          size: 32,
-          color: primaryColor.withOpacity(0.6),
+      Navigator.pop(context);
+    } catch (e) {
+      setState(() => _isUpdating = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error processing payment: $e'),
+          backgroundColor: Colors.red,
         ),
-      ),
-    );
-  }
-
-  Widget _buildLoadingState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          CircularProgressIndicator(color: primaryColor),
-          SizedBox(height: 16),
-          Text(
-            'Loading Menu Items...',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.grey[600],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildErrorState(String message) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.error_outline, size: 64, color: Colors.red[300]),
-          SizedBox(height: 16),
-          Text(
-            message,
-            style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmptyState(String title, String subtitle, IconData icon) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 80, color: Colors.grey[300]),
-          SizedBox(height: 16),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey[700],
-            ),
-          ),
-          SizedBox(height: 8),
-          Text(
-            subtitle,
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey[500],
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
-    );
+      );
+    }
   }
 }
+
 
 
 
