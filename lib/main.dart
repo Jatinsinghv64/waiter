@@ -7237,3 +7237,4 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen>
   }
 
 }
+
