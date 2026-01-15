@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Production Readiness Audit Report - Waiter App</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 900px; margin: 0 auto; padding: 40px 20px; }
+        h1 { color: #1a1a1a; border-bottom: 3px solid #2563eb; padding-bottom: 10px; margin-bottom: 20px; }
+        h2 { color: #1e40af; margin-top: 30px; margin-bottom: 15px; border-left: 4px solid #2563eb; padding-left: 12px; }
+        h3 { color: #374151; margin-top: 25px; margin-bottom: 10px; }
+        h4 { color: #4b5563; margin-top: 20px; margin-bottom: 8px; }
+        table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+        th, td { border: 1px solid #d1d5db; padding: 10px 12px; text-align: left; }
+        th { background: #f3f4f6; font-weight: 600; }
+        tr:nth-child(even) { background: #f9fafb; }
+        code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+        pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 8px; overflow-x: auto; margin: 15px 0; }
+        pre code { background: none; color: inherit; }
+        .score-box { background: linear-gradient(135deg, #fef3c7, #fde68a); border: 2px solid #f59e0b; border-radius: 12px; padding: 20px; text-align: center; margin: 20px 0; }
+        .score-number { font-size: 48px; font-weight: 700; color: #b45309; }
+        .score-label { font-size: 18px; color: #92400e; }
+        .critical { background: #fef2f2; border-left: 4px solid #dc2626; padding: 12px; margin: 10px 0; }
+        .high { background: #fff7ed; border-left: 4px solid #f97316; padding: 12px; margin: 10px 0; }
+        .medium { background: #fefce8; border-left: 4px solid #eab308; padding: 12px; margin: 10px 0; }
+        .low { background: #f0fdf4; border-left: 4px solid #22c55e; padding: 12px; margin: 10px 0; }
+        .badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+        .badge-critical { background: #dc2626; color: white; }
+        .badge-high { background: #f97316; color: white; }
+        .badge-medium { background: #eab308; color: #1a1a1a; }
+        .badge-low { background: #22c55e; color: white; }
+        .badge-ok { background: #22c55e; color: white; }
+        .badge-warn { background: #f59e0b; color: #1a1a1a; }
+        .badge-fail { background: #dc2626; color: white; }
+        hr { border: none; border-top: 1px solid #e5e7eb; margin: 30px 0; }
+        .caution { background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 16px; margin: 20px 0; }
+        .caution-title { color: #dc2626; font-weight: 600; margin-bottom: 8px; }
+        .important { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 16px; margin: 20px 0; }
+        .important-title { color: #2563eb; font-weight: 600; margin-bottom: 8px; }
+        .diff-add { color: #22c55e; }
+        .diff-remove { color: #dc2626; }
+        @media print { body { padding: 20px; } .pagebreak { page-break-before: always; } }
+    </style>
+</head>
+<body>
+    <h1>Production Readiness Audit Report</h1>
+    <p><strong>App:</strong> Waiter App (Flutter) &nbsp;|&nbsp; <strong>Version:</strong> 1.0.0+1 &nbsp;|&nbsp; <strong>Date:</strong> January 14, 2026</p>
+
+    <hr>
+
+    <h2>Executive Summary</h2>
+    
+    <div class="score-box">
+        <div class="score-number">52/100</div>
+        <div class="score-label">Overall Readiness Score</div>
+    </div>
+
+    <table>
+        <tr><th>Category</th><th>Score</th><th>Status</th></tr>
+        <tr><td>Static Analysis & Code Quality</td><td>45/100</td><td><span class="badge badge-warn">⚠️ Needs Work</span></td></tr>
+        <tr><td>Security & Credentials</td><td>60/100</td><td><span class="badge badge-warn">⚠️ Needs Work</span></td></tr>
+        <tr><td>Dependencies</td><td>70/100</td><td><span class="badge badge-warn">⚠️ Minor Issues</span></td></tr>
+        <tr><td>Build & Release</td><td>30/100</td><td><span class="badge badge-critical">🔴 Critical</span></td></tr>
+        <tr><td>Testing</td><td>15/100</td><td><span class="badge badge-critical">🔴 Critical</span></td></tr>
+        <tr><td>Platform Readiness</td><td>40/100</td><td><span class="badge badge-critical">🔴 Critical</span></td></tr>
+    </table>
+
+    <div class="caution">
+        <div class="caution-title">⚠️ CAUTION: NOT READY FOR PRODUCTION</div>
+        <p>The app has <strong>4 critical issues</strong> that MUST be fixed before release. The release build uses debug signing, the package name uses a placeholder, and there are no tests.</p>
+    </div>
+
+    <h3>Top 10 Issues</h3>
+    <table>
+        <tr><th>#</th><th>Issue</th><th>Severity</th></tr>
+        <tr><td>1</td><td>Release build uses debug signing config</td><td><span class="badge badge-critical">CRITICAL</span></td></tr>
+        <tr><td>2</td><td>Package name uses placeholder <code>com.example.waiter</code></td><td><span class="badge badge-critical">CRITICAL</span></td></tr>
+        <tr><td>3</td><td>No release keystore configured</td><td><span class="badge badge-critical">CRITICAL</span></td></tr>
+        <tr><td>4</td><td>No unit/integration tests (only default template)</td><td><span class="badge badge-critical">CRITICAL</span></td></tr>
+        <tr><td>5</td><td>Firebase API keys exposed in source code</td><td><span class="badge badge-high">HIGH</span></td></tr>
+        <tr><td>6</td><td>169 lint issues found by flutter analyze</td><td><span class="badge badge-high">HIGH</span></td></tr>
+        <tr><td>7</td><td>No CI/CD pipeline configured</td><td><span class="badge badge-high">HIGH</span></td></tr>
+        <tr><td>8</td><td>Missing iOS privacy policy URL in Info.plist</td><td><span class="badge badge-high">HIGH</span></td></tr>
+        <tr><td>9</td><td>9 debug print() statements in production code</td><td><span class="badge badge-medium">MEDIUM</span></td></tr>
+        <tr><td>10</td><td>17 outdated dependencies</td><td><span class="badge badge-medium">MEDIUM</span></td></tr>
+    </table>
+
+    <div class="pagebreak"></div>
+
+    <h2>🔴 CRITICAL Issues (4)</h2>
+
+    <div class="critical">
+        <h3>C1. Release Build Uses Debug Signing Config</h3>
+        <table>
+            <tr><td><strong>File Path</strong></td><td><code>android/app/build.gradle.kts:36-41</code></td></tr>
+            <tr><td><strong>Risk Impact</strong></td><td>App cannot be published to Play Store; production builds are essentially debug builds</td></tr>
+        </table>
+        <p><strong>Current code:</strong></p>
+        <pre><code>buildTypes {
+    release {
+        // TODO: Add your own signing config for the release build.
+        signingConfig = signingConfigs.getByName("debug")
+    }
+}</code></pre>
+        <p><strong>Fix:</strong> Create a release signing config with production keystore and enable R8 minification.</p>
+    </div>
+
+    <div class="critical">
+        <h3>C2. Placeholder Package Name</h3>
+        <table>
+            <tr><td><strong>File Paths</strong></td><td><code>android/app/build.gradle.kts</code>, <code>ios/Runner/GoogleService-Info.plist</code></td></tr>
+            <tr><td><strong>Risk Impact</strong></td><td>Cannot publish to stores; Firebase may not work correctly in production</td></tr>
+        </table>
+        <p><strong>Fix:</strong> Choose a unique package name (e.g., <code>com.yourcompany.waiter</code>) and update all configuration files. Regenerate Firebase configs with <code>flutterfire configure</code>.</p>
+    </div>
+
+    <div class="critical">
+        <h3>C3. No Release Keystore Configured</h3>
+        <table>
+            <tr><td><strong>Location</strong></td><td><code>android/</code> directory</td></tr>
+            <tr><td><strong>Risk Impact</strong></td><td>Cannot sign production APK/AAB for Play Store</td></tr>
+        </table>
+        <p><strong>Fix:</strong> Generate keystore with:</p>
+        <pre><code>keytool -genkey -v -keystore android/upload-keystore.jks \
+    -keyalg RSA -keysize 2048 -validity 10000 -alias upload</code></pre>
+    </div>
+
+    <div class="critical">
+        <h3>C4. No Unit/Integration Tests</h3>
+        <table>
+            <tr><td><strong>File Path</strong></td><td><code>test/widget_test.dart</code></td></tr>
+            <tr><td><strong>Risk Impact</strong></td><td>No test coverage; high risk of regressions; App may crash in production</td></tr>
+        </table>
+        <p><strong>Current State:</strong> Only default Flutter template test exists (counter increment test that doesn't match the app).</p>
+    </div>
+
+    <h2>🟠 HIGH Issues (8)</h2>
+
+    <div class="high">
+        <h3>H1. Firebase API Keys Exposed in Source Code</h3>
+        <p><strong>Files:</strong> <code>firebase_options.dart</code>, <code>google-services.json</code>, <code>GoogleService-Info.plist</code></p>
+        <div class="important">
+            <div class="important-title">ℹ️ Note</div>
+            <p>Firebase API keys in mobile apps are expected to be bundled. Security comes from Firestore Rules, App Check, and API key restrictions in Google Cloud Console.</p>
+        </div>
+    </div>
+
+    <div class="high">
+        <h3>H2. 169 Lint Issues Found</h3>
+        <table>
+            <tr><th>Category</th><th>Count</th></tr>
+            <tr><td><code>deprecated_member_use</code> (withOpacity)</td><td>50+</td></tr>
+            <tr><td><code>use_build_context_synchronously</code></td><td>15+</td></tr>
+            <tr><td><code>avoid_print</code></td><td>9</td></tr>
+            <tr><td><code>use_key_in_widget_constructors</code></td><td>5+</td></tr>
+        </table>
+        <p><strong>Command:</strong> <code>flutter analyze</code></p>
+    </div>
+
+    <div class="high">
+        <h3>H3-H8. Other High Issues</h3>
+        <ul>
+            <li><strong>H3:</strong> No CI/CD Pipeline (missing <code>.github/workflows/</code>)</li>
+            <li><strong>H4:</strong> Missing iOS Privacy Policy URL in Info.plist</li>
+            <li><strong>H5:</strong> Large Screen Files - TableScreen.dart (3493 lines), TakeawayScreen.dart (2111 lines)</li>
+            <li><strong>H6:</strong> Missing ProGuard/R8 Configuration</li>
+            <li><strong>H7:</strong> Unused imports and dead code</li>
+            <li><strong>H8:</strong> BuildContext used across async gaps</li>
+        </ul>
+    </div>
+
+    <h2>🟡 MEDIUM Issues (10) Summary</h2>
+    <table>
+        <tr><th>Issue</th><th>Details</th></tr>
+        <tr><td>M1. Debug print statements</td><td>9 occurrences across lib/</td></tr>
+        <tr><td>M2. Outdated dependencies</td><td>17 packages need update</td></tr>
+        <tr><td>M3. Deprecated withOpacity</td><td>50+ occurrences</td></tr>
+        <tr><td>M4. No accessibility labels</td><td>Missing Semantics widgets</td></tr>
+        <tr><td>M5. Hardcoded strings</td><td>No localization support</td></tr>
+        <tr><td>M6. Multiple apps in google-services.json</td><td>6 app configs, only 1 needed</td></tr>
+        <tr><td>M7. Missing INTERNET permission</td><td>Should be explicit in manifest</td></tr>
+        <tr><td>M8. External HTTP URL for sound</td><td>Should bundle as asset</td></tr>
+        <tr><td>M9. Unused variable</td><td>customerName in main.dart:237</td></tr>
+        <tr><td>M10. Dead null-aware expression</td><td>main.dart:224</td></tr>
+    </table>
+
+    <div class="pagebreak"></div>
+
+    <h2>Platform Readiness Checklists</h2>
+
+    <h3>Android Play Store</h3>
+    <table>
+        <tr><th>Item</th><th>Status</th><th>Action</th></tr>
+        <tr><td>Package name changed</td><td>❌</td><td>Change from com.example.*</td></tr>
+        <tr><td>Release keystore</td><td>❌</td><td>Generate keystore</td></tr>
+        <tr><td>Signing config</td><td>❌</td><td>Configure signing</td></tr>
+        <tr><td>ProGuard/R8</td><td>❌</td><td>Enable minification</td></tr>
+        <tr><td>Target SDK 33+</td><td>✅</td><td>OK</td></tr>
+        <tr><td>Min SDK 23</td><td>✅</td><td>OK</td></tr>
+    </table>
+
+    <h3>iOS App Store</h3>
+    <table>
+        <tr><th>Item</th><th>Status</th><th>Action</th></tr>
+        <tr><td>Bundle ID changed</td><td>❌</td><td>Change from com.example.*</td></tr>
+        <tr><td>Privacy Policy URL</td><td>❌</td><td>Add to Info.plist</td></tr>
+        <tr><td>Export Compliance</td><td>❌</td><td>Add ITSAppUsesNonExemptEncryption</td></tr>
+        <tr><td>App Transport Security</td><td>✅</td><td>HTTPS used</td></tr>
+        <tr><td>Launch Screen</td><td>✅</td><td>Present</td></tr>
+    </table>
+
+    <h2>Commands to Reproduce Checks</h2>
+    <pre><code># Run all analysis
+flutter analyze
+
+# Check outdated packages
+flutter pub outdated
+
+# Find print statements
+grep -rn "print(" lib/
+
+# Check for placeholder package
+grep -r "com.example" android/ ios/ lib/
+
+# Run tests
+flutter test</code></pre>
+
+    <h2>Final Risk Rating</h2>
+    
+    <div class="caution">
+        <div class="caution-title">❌ GO/NO-GO DECISION: NO-GO</div>
+        <h4>Must Fix Before Release (Blocking):</h4>
+        <ol>
+            <li>Change package name from <code>com.example.waiter</code></li>
+            <li>Create release keystore and configure signing</li>
+            <li>Configure ProGuard/R8 for release builds</li>
+            <li>Add basic tests for critical functionality</li>
+            <li>Fix critical lint issues (async context usage)</li>
+        </ol>
+        <p><strong>Estimated Fix Time: 2-4 hours</strong></p>
+    </div>
+
+    <h2>JSON Summary</h2>
+    <pre><code>{
+  "score": 52,
+  "critical_issues_count": 4,
+  "high_issues_count": 8,
+  "medium_issues_count": 10,
+  "low_issues_count": 6,
+  "build_status": "warnings",
+  "required_actions": [
+    "Change package name from com.example.waiter",
+    "Create and configure release keystore",
+    "Configure ProGuard/R8 for release builds",
+    "Add unit tests for core functionality",
+    "Fix 169 lint issues from flutter analyze",
+    "Remove 9 print() debug statements",
+    "Update 17 outdated dependencies",
+    "Create CI/CD pipeline",
+    "Add iOS privacy policy disclosures",
+    "Restrict Firebase API keys in Google Cloud Console"
+  ]
+}</code></pre>
+
+    <hr>
+    <p style="text-align: center; color: #6b7280; font-size: 14px;">Generated by Antigravity | January 14, 2026</p>
+</body>
+</html>
