@@ -293,8 +293,8 @@ class InputSanitizer {
 
 /// Session management utilities
 class SessionManager {
-  /// Session timeout duration (30 minutes)
-  static const Duration sessionTimeout = Duration(minutes: 30);
+  /// Session timeout duration (24 hours)
+  static const Duration sessionTimeout = Duration(hours: 24);
   
   /// Last activity timestamp - should be updated on user interactions
   static DateTime _lastActivity = DateTime.now();

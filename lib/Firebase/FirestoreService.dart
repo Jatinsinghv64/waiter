@@ -577,4 +577,265 @@ class FirestoreService {
 
     return query.orderBy('timestamp', descending: true).snapshots();
   }
+
+  // ============================================
+  // CUSTOMER SELF-ORDERING (QR CODE)
+  // ============================================
+
+  /// Creates an order from customer self-ordering via QR code
+  /// INDUSTRY STANDARD (Petpooja/Social): Always creates NEW order, never merges
+  /// Each order is immutable once kitchen accepts it
+  /// All orders link to session via sessionId and are tracked in session.orderIds[]
+  static Future<String> createCustomerOrder({
+    required String sessionId,
+    required List<Map<String, dynamic>> items,
+    required double totalAmount,
+    String? customerName,
+    String? customerPhone,
+  }) async {
+    return await _firestore.runTransaction((transaction) async {
+      // Validate QR session
+      final sessionRef = _firestore.collection('qr_sessions').doc(sessionId);
+      final sessionDoc = await transaction.get(sessionRef);
+      
+      if (!sessionDoc.exists) {
+        throw OrderNotFoundException('QR Session not found: $sessionId');
+      }
+      
+      final sessionData = sessionDoc.data() as Map<String, dynamic>;
+      final isActive = sessionData['isActive'] ?? false;
+      final expiresAt = (sessionData['expiresAt'] as Timestamp?)?.toDate();
+      final isBillLocked = sessionData['isBillLocked'] ?? false;
+      
+      if (!isActive) {
+        throw InvalidStatusTransitionException('inactive', 'creating order');
+      }
+      
+      if (expiresAt != null && DateTime.now().isAfter(expiresAt)) {
+        throw InvalidStatusTransitionException('expired', 'creating order');
+      }
+      
+      // Check if session is locked (bill already printed)
+      if (isBillLocked) {
+        throw InvalidStatusTransitionException('bill_locked', 'creating order');
+      }
+      
+      final branchId = sessionData['branchId'] as String;
+      final tableNumber = sessionData['tableNumber'] as String;
+      final existingOrderIds = List<String>.from(sessionData['orderIds'] ?? []);
+      final orderSequence = existingOrderIds.length + 1;
+      
+      // Check if restaurant is open
+      final branchRef = _firestore.collection('Branch').doc(branchId);
+      final branchDoc = await transaction.get(branchRef);
+      
+      if (!branchDoc.exists) {
+        throw OrderNotFoundException('Branch not found: $branchId');
+      }
+      
+      final branchData = branchDoc.data() as Map<String, dynamic>;
+      final isOpen = branchData['isOpen'] ?? true;
+      
+      if (!isOpen) {
+        throw InvalidStatusTransitionException('closed', 'creating order');
+      }
+      
+      // Validate table exists
+      final tables = branchData['Tables'] as Map<String, dynamic>? ?? {};
+      final tableData = tables[tableNumber] as Map<String, dynamic>?;
+      
+      if (tableData == null) {
+        throw TableOrderMismatchException(tableNumber, null);
+      }
+      
+      // ALWAYS CREATE NEW ORDER (Petpooja/Social style - orders are immutable)
+      final dailyOrderNumber = await getNextDailyOrderNumber(transaction, branchId);
+      final orderRef = _firestore.collection('Orders').doc();
+      
+      final orderData = <String, dynamic>{
+        'Order_type': OrderType.dineIn,
+        'tableNumber': tableNumber,
+        'items': items,
+        'subtotal': totalAmount,
+        'totalAmount': totalAmount,
+        'status': OrderStatus.preparing,
+        'paymentStatus': PaymentStatus.unpaid,
+        'timestamp': FieldValue.serverTimestamp(),
+        'dailyOrderNumber': dailyOrderNumber,
+        'branchIds': [branchId],
+        'version': 1,
+        'placedByCustomer': true,
+        'qrSessionId': sessionId,
+        // Multi-order tracking fields
+        'orderType': orderSequence == 1 ? 'initial' : 'addon',
+        'orderSequence': orderSequence,
+        'isKitchenLocked': false, // Becomes true when kitchen accepts
+        if (customerName != null && customerName.isNotEmpty) 'customerName': customerName,
+        if (customerPhone != null && customerPhone.isNotEmpty) 'customerPhone': customerPhone,
+      };
+      
+      transaction.set(orderRef, orderData);
+      
+      // Update table status to ordered (only if first order)
+      if (orderSequence == 1) {
+        transaction.update(branchRef, {
+          'Tables.$tableNumber.status': TableStatus.ordered,
+          'Tables.$tableNumber.currentOrderId': orderRef.id,
+          'Tables.$tableNumber.statusTimestamp': FieldValue.serverTimestamp(),
+        });
+      } else {
+        // For addon orders, update the currentOrderId to the latest order
+        transaction.update(branchRef, {
+          'Tables.$tableNumber.currentOrderId': orderRef.id,
+          'Tables.$tableNumber.statusTimestamp': FieldValue.serverTimestamp(),
+        });
+      }
+      
+      // Add order to session's order list
+      transaction.update(sessionRef, {
+        'orderIds': FieldValue.arrayUnion([orderRef.id]),
+        'totalOrderCount': FieldValue.increment(1),
+        'lastActivity': FieldValue.serverTimestamp(),
+      });
+      
+      return orderRef.id;
+    });
+  }
+
+  /// Locks an order once kitchen has accepted it (makes it immutable)
+  /// Called by kitchen staff when they start preparing
+  static Future<void> lockOrderForKitchen(String orderId) async {
+    await _firestore.collection('Orders').doc(orderId).update({
+      'isKitchenLocked': true,
+      'kitchenLockedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Gets all orders for a session
+  static Future<List<Map<String, dynamic>>> getSessionOrders(String sessionId) async {
+    final querySnapshot = await _firestore
+        .collection('Orders')
+        .where('qrSessionId', isEqualTo: sessionId)
+        .orderBy('orderSequence', descending: false)
+        .get();
+    
+    return querySnapshot.docs.map((doc) {
+      final data = doc.data();
+      data['orderId'] = doc.id;
+      return data;
+    }).toList();
+  }
+
+  /// Gets the total amount for all orders in a session
+  static Future<double> getSessionTotal(String sessionId) async {
+    final orders = await getSessionOrders(sessionId);
+    return orders.fold<double>(
+      0.0,
+      (sum, order) => sum + ((order['totalAmount'] as num?)?.toDouble() ?? 0.0),
+    );
+  }
+
+  /// Processes payment for an entire session (all orders)
+  static Future<void> processSessionPayment({
+    required String sessionId,
+    required String branchId,
+    required String paymentMethod,
+    required double amount,
+    String? tableNumber,
+  }) async {
+    await _firestore.runTransaction((transaction) async {
+      // Get session
+      final sessionRef = _firestore.collection('qr_sessions').doc(sessionId);
+      final sessionDoc = await transaction.get(sessionRef);
+      
+      if (!sessionDoc.exists) {
+        throw OrderNotFoundException('Session not found: $sessionId');
+      }
+      
+      final sessionData = sessionDoc.data() as Map<String, dynamic>;
+      final orderIds = List<String>.from(sessionData['orderIds'] ?? []);
+      final sessionTableNumber = sessionData['tableNumber'] as String;
+      
+      // Mark all orders as paid
+      for (final orderId in orderIds) {
+        final orderRef = _firestore.collection('Orders').doc(orderId);
+        final orderDoc = await transaction.get(orderRef);
+        
+        if (orderDoc.exists) {
+          transaction.update(orderRef, {
+            'paymentStatus': 'paid',
+            'paymentMethod': paymentMethod,
+            'paymentTime': FieldValue.serverTimestamp(),
+            'status': 'paid',
+          });
+        }
+      }
+      
+      // Lock session permanently
+      transaction.update(sessionRef, {
+        'isBillLocked': true,
+        'isActive': false, // Session is complete
+        'paidAt': FieldValue.serverTimestamp(),
+        'paidAmount': amount,
+        'paymentMethod': paymentMethod,
+      });
+      
+      // Clear table
+      final branchRef = _firestore.collection('Branch').doc(branchId);
+      transaction.update(branchRef, {
+        'Tables.$sessionTableNumber.status': 'available',
+        'Tables.$sessionTableNumber.currentOrderId': FieldValue.delete(),
+        'Tables.$sessionTableNumber.statusTimestamp': FieldValue.delete(),
+      });
+    });
+  }
+
+
+  /// Gets menu categories for a branch
+  static Stream<QuerySnapshot> getMenuCategoriesStream(String branchId) {
+    return _firestore
+        .collection('menu_categories')
+        .where('branchIds', arrayContains: branchId)
+        .orderBy('order', descending: false)
+        .snapshots();
+  }
+
+  /// Gets menu items for a branch
+  static Stream<QuerySnapshot> getMenuItemsStream(String branchId) {
+    return _firestore
+        .collection('menu_items')
+        .where('branchIds', arrayContains: branchId)
+        .where('isAvailable', isEqualTo: true)
+        .snapshots();
+  }
+
+  /// Gets menu items as a one-time fetch (for customer ordering)
+  static Future<List<Map<String, dynamic>>> getMenuItemsForBranch(String branchId) async {
+    final snapshot = await _firestore
+        .collection('menu_items')
+        .where('branchIds', arrayContains: branchId)
+        .where('isAvailable', isEqualTo: true)
+        .get();
+    
+    return snapshot.docs.map((doc) {
+      final data = doc.data();
+      data['id'] = doc.id;
+      return data;
+    }).toList();
+  }
+
+  /// Gets menu categories as a one-time fetch (for customer ordering)
+  static Future<List<Map<String, dynamic>>> getMenuCategoriesForBranch(String branchId) async {
+    final snapshot = await _firestore
+        .collection('menu_categories')
+        .where('branchIds', arrayContains: branchId)
+        .orderBy('order', descending: false)
+        .get();
+    
+    return snapshot.docs.map((doc) {
+      final data = doc.data();
+      data['id'] = doc.id;
+      return data;
+    }).toList();
+  }
 }

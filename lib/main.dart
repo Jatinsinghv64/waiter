@@ -9,16 +9,21 @@ import 'Screens/ActiveOrderScreen.dart';
 import 'Screens/LoginScreen.dart';
 import 'Screens/TableScreen.dart';
 import 'Screens/TakeawayScreen.dart';
+import 'Screens/Customer/session_screen.dart';
 import 'Firebase/firebase_options.dart';
 import 'package:audioplayers/audioplayers.dart'; // v5.0.0
 import 'package:vibration/vibration.dart';
 import 'Screens/OrderDetailScreen.dart';
+import 'Screens/WelcomeScreen.dart';
 import 'Firebase/FirestoreService.dart';
 import 'constants.dart';
 import 'utils.dart';
 
 import 'package:provider/provider.dart'; // Add provider import
 import 'Providers/UserProvider.dart'; // Add UserProvider import
+
+// Alias for customer session screen
+typedef CustomerSessionScreen = SessionScreen;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -57,10 +62,33 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.blue,
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      home: AuthWrapper(),
+      // Handle /order route for customer web ordering
+      onGenerateRoute: (settings) {
+        // Check if this is the customer ordering route
+        if (settings.name == '/order' || 
+            Uri.base.path.contains('/order') ||
+            Uri.base.queryParameters.containsKey('session')) {
+          return MaterialPageRoute(
+            builder: (context) => const CustomerSessionScreen(),
+          );
+        }
+        // Default route
+        return MaterialPageRoute(builder: (context) => AuthWrapper());
+      },
+      home: _getInitialScreen(),
     );
   }
+
+  Widget _getInitialScreen() {
+    // Check if we're on web and have a session parameter
+    final uri = Uri.base;
+    if (uri.path.contains('/order') || uri.queryParameters.containsKey('session')) {
+      return const CustomerSessionScreen();
+    }
+    return AuthWrapper();
+  }
 }
+
 
 class AuthWrapper extends StatefulWidget {
   const AuthWrapper({super.key});
@@ -94,7 +122,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
             }
           });
 
-          return MainWaiterApp();
+          // Show welcome screen with animations, which then transitions to MainWaiterApp
+          return const WelcomeScreen();
         }
         return Scaffold(body: Center(child: CircularProgressIndicator()));
       },

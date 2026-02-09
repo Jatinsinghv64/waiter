@@ -78,6 +78,11 @@ class AppColors {
   static const Color primary = Color(0xFF1976D2);
   static const Color secondary = Color(0xFFE3F2FD);
   static const Color background = Color(0xFFF5F5F5);
+  
+  // Welcome screen gradient colors
+  static const Color welcomeGradientStart = Color(0xFF1976D2);
+  static const Color welcomeGradientMiddle = Color(0xFF1565C0);
+  static const Color welcomeGradientEnd = Color(0xFF0D47A1);
 
   // Status colors
   static const Color statusPending = Color(0xFFFFA726); // Orange

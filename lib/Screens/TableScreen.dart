@@ -1,14 +1,16 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../Firebase/FirestoreService.dart';
 import 'OrderDetailScreen.dart';
+import 'TableQRCodeScreen.dart';
+import 'ProfileScreen.dart';
 import 'package:provider/provider.dart';
 import '../Providers/UserProvider.dart';
-import 'ProfileScreen.dart';
 import '../constants.dart';
 import '../utils.dart';
 
@@ -71,25 +73,88 @@ class _TablesScreenState extends State<TablesScreen>
     }
 
     if (branchId == null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.warning, size: 64, color: Colors.orange),
-            SizedBox(height: 16),
-            Text("No Branch Assigned"),
-            SizedBox(height: 8),
-            ElevatedButton(
-              onPressed: () {
-                // Retry by re-fetching profile? Or just logout
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => ProfileScreen()),
-                );
-              },
-              child: Text("Go to Profile"),
+      return Scaffold(
+        backgroundColor: Color(0xFFF5F6F8),
+        body: Center(
+          child: Padding(
+            padding: EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: Colors.orange[50],
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.business_outlined, size: 64, color: Colors.orange[600]),
+                ),
+                SizedBox(height: 24),
+                Text(
+                  "No Branch Assigned",
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[800],
+                  ),
+                ),
+                SizedBox(height: 12),
+                Text(
+                  "Your account hasn't been assigned to any branch yet. Please contact your administrator.",
+                  style: TextStyle(
+                    color: Colors.grey[600],
+                    fontSize: 15,
+                    height: 1.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                SizedBox(height: 32),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () async {
+                      // Refresh profile to check if branch was assigned
+                      final email = FirebaseAuth.instance.currentUser?.email;
+                      if (email != null) {
+                        await userProvider.fetchUserProfile(email);
+                      }
+                    },
+                    icon: Icon(Icons.refresh),
+                    label: Text("Refresh"),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Color(0xFF1976D2),
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+                SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      // Logout and return to login screen
+                      await FirebaseAuth.instance.signOut();
+                      userProvider.clearProfile();
+                    },
+                    icon: Icon(Icons.logout),
+                    label: Text("Logout"),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.grey[700],
+                      padding: EdgeInsets.symmetric(vertical: 14),
+                      side: BorderSide(color: Colors.grey[400]!),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       );
     }
@@ -664,6 +729,11 @@ class _TablesScreenState extends State<TablesScreen>
         currentOrderId,
         status,
       ),
+      onLongPress: () => _showTableOptionsMenu(
+        context,
+        tableNumber,
+        tableData,
+      ),
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
@@ -845,6 +915,147 @@ class _TablesScreenState extends State<TablesScreen>
     );
   }
 
+  void _showTableOptionsMenu(
+    BuildContext context,
+    String tableNumber,
+    Map<String, dynamic> tableData,
+  ) {
+    HapticFeedback.mediumImpact();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Container(
+                margin: EdgeInsets.only(top: 12),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              SizedBox(height: 16),
+              // Title
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        Icons.table_restaurant,
+                        color: AppColors.primary,
+                        size: 24,
+                      ),
+                    ),
+                    SizedBox(width: 12),
+                    Text(
+                      'Table $tableNumber',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey[800],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(height: 24),
+              // Options
+              _buildOptionTile(
+                icon: Icons.qr_code_2,
+                iconColor: AppColors.primary,
+                title: 'View QR Code',
+                subtitle: 'Scan to place orders',
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => TableQRCodeScreen(
+                        tableNumber: tableNumber,
+                        tableData: Map<String, dynamic>.from(tableData),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              _buildOptionTile(
+                icon: Icons.restaurant_menu,
+                iconColor: Colors.orange[600]!,
+                title: 'Take Order',
+                subtitle: 'Open order screen',
+                onTap: () {
+                  Navigator.pop(context);
+                  final status = tableData['status']?.toString() ?? 'available';
+                  final currentOrderId = tableData['currentOrderId']?.toString();
+                  _navigateToOrderScreen(
+                    context,
+                    tableNumber,
+                    tableData,
+                    currentOrderId,
+                    status,
+                  );
+                },
+              ),
+              SizedBox(height: 16),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOptionTile({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+      leading: Container(
+        padding: EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: iconColor.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(icon, color: iconColor, size: 24),
+      ),
+      title: Text(
+        title,
+        style: TextStyle(
+          fontWeight: FontWeight.w600,
+          fontSize: 16,
+          color: Colors.grey[800],
+        ),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: TextStyle(
+          fontSize: 13,
+          color: Colors.grey[500],
+        ),
+      ),
+      trailing: Icon(Icons.chevron_right, color: Colors.grey[400]),
+      onTap: onTap,
+    );
+  }
+
   void _navigateToOrderScreen(
     BuildContext context,
     String tableNumber,
@@ -852,6 +1063,7 @@ class _TablesScreenState extends State<TablesScreen>
     String? currentOrderId,
     String status,
   ) {
+
     HapticFeedback.lightImpact();
     Navigator.push(
       context,
