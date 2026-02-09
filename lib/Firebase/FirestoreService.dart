@@ -1,6 +1,7 @@
 // firestore_service.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../constants.dart';
+import '../utils.dart';
 
 /// Custom exception types for better error handling
 class OrderNotFoundException implements Exception {
@@ -593,6 +594,51 @@ class FirestoreService {
     String? customerName,
     String? customerPhone,
   }) async {
+    if (items.isEmpty) {
+      throw ArgumentError('Cart cannot be empty');
+    }
+
+    if (items.length > ValidationLimits.maxItemsPerOrder) {
+      throw ArgumentError('Too many items in cart');
+    }
+
+    final normalizedItems = <Map<String, dynamic>>[];
+    double computedTotal = 0.0;
+
+    for (final item in items) {
+      final quantity = (item['quantity'] as num?)?.toInt() ?? 0;
+      final basePrice = (item['basePrice'] as num?)?.toDouble() ?? 0.0;
+      final variantPrice = (item['variantPrice'] as num?)?.toDouble() ?? 0.0;
+      final price =
+          (item['price'] as num?)?.toDouble() ?? (basePrice + variantPrice);
+
+      if (quantity <= 0 || quantity > ValidationLimits.maxQuantityPerItem) {
+        throw ArgumentError('Invalid item quantity');
+      }
+
+      if (price < 0) {
+        throw ArgumentError('Invalid item price');
+      }
+
+      computedTotal += price * quantity;
+
+      normalizedItems.add({
+        ...item,
+        'quantity': quantity,
+        'price': price,
+        'basePrice': basePrice,
+        'variantPrice': variantPrice,
+        'name': InputSanitizer.sanitize(item['name']?.toString()),
+        'specialInstructions': InputSanitizer.sanitizeInstructions(
+          item['specialInstructions']?.toString(),
+        ),
+      });
+    }
+
+    if (computedTotal <= 0) {
+      throw ArgumentError('Order total must be greater than zero');
+    }
+
     return await _firestore.runTransaction((transaction) async {
       // Validate QR session
       final sessionRef = _firestore.collection('qr_sessions').doc(sessionId);
@@ -620,8 +666,16 @@ class FirestoreService {
         throw InvalidStatusTransitionException('bill_locked', 'creating order');
       }
       
-      final branchId = sessionData['branchId'] as String;
-      final tableNumber = sessionData['tableNumber'] as String;
+      final branchId = sessionData['branchId'];
+      final tableNumber = sessionData['tableNumber'];
+
+      if (branchId is! String || branchId.isEmpty) {
+        throw OrderNotFoundException('Invalid branch for session: $sessionId');
+      }
+
+      if (tableNumber is! String || tableNumber.isEmpty) {
+        throw OrderNotFoundException('Invalid table for session: $sessionId');
+      }
       final existingOrderIds = List<String>.from(sessionData['orderIds'] ?? []);
       final orderSequence = existingOrderIds.length + 1;
       
@@ -651,13 +705,18 @@ class FirestoreService {
       // ALWAYS CREATE NEW ORDER (Petpooja/Social style - orders are immutable)
       final dailyOrderNumber = await getNextDailyOrderNumber(transaction, branchId);
       final orderRef = _firestore.collection('Orders').doc();
+
+      final sanitizedCustomerName =
+          InputSanitizer.sanitizeWithLimit(customerName, ValidationLimits.maxCustomerNameLength);
+      final sanitizedCustomerPhone =
+          InputSanitizer.sanitize(customerPhone);
       
       final orderData = <String, dynamic>{
         'Order_type': OrderType.dineIn,
         'tableNumber': tableNumber,
-        'items': items,
-        'subtotal': totalAmount,
-        'totalAmount': totalAmount,
+        'items': normalizedItems,
+        'subtotal': computedTotal,
+        'totalAmount': computedTotal,
         'status': OrderStatus.preparing,
         'paymentStatus': PaymentStatus.unpaid,
         'timestamp': FieldValue.serverTimestamp(),
@@ -670,8 +729,10 @@ class FirestoreService {
         'orderType': orderSequence == 1 ? 'initial' : 'addon',
         'orderSequence': orderSequence,
         'isKitchenLocked': false, // Becomes true when kitchen accepts
-        if (customerName != null && customerName.isNotEmpty) 'customerName': customerName,
-        if (customerPhone != null && customerPhone.isNotEmpty) 'customerPhone': customerPhone,
+        if (sanitizedCustomerName.isNotEmpty)
+          'customerName': sanitizedCustomerName,
+        if (sanitizedCustomerPhone.isNotEmpty)
+          'customerPhone': sanitizedCustomerPhone,
       };
       
       transaction.set(orderRef, orderData);
