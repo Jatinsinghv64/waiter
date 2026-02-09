@@ -42,6 +42,7 @@ void main() async {
     // Continue app startup - Firebase errors will be handled per-operation
   }
 
+
   runApp(
     MultiProvider(
       providers: [ChangeNotifierProvider(create: (_) => UserProvider())],
