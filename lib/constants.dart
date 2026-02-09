@@ -61,9 +61,29 @@ class AppConfig {
   /// Currency symbol used throughout the app
   static const String currencySymbol = 'QAR';
 
+  /// Base URL for customer ordering (set to your hosted web ordering URL).
+  /// Example: https://example.com/order
+  static const String customerOrderBaseUrl = '';
+
   /// Format amount with currency
   static String formatCurrency(double amount) {
     return '$currencySymbol ${amount.toStringAsFixed(2)}';
+  }
+
+  /// Builds a customer order URL for a QR session.
+  static Uri buildCustomerOrderUri(String sessionId) {
+    final baseUri = customerOrderBaseUrl.isNotEmpty
+        ? Uri.parse(customerOrderBaseUrl)
+        : Uri.base;
+    final resolvedBase = baseUri.path.contains('/order')
+        ? baseUri
+        : baseUri.replace(path: '/order');
+    return resolvedBase.replace(queryParameters: {'session': sessionId});
+  }
+
+  /// Checks whether the generated URI is safe to use in QR codes.
+  static bool isValidCustomerOrderUri(Uri uri) {
+    return uri.scheme.isNotEmpty && uri.host.isNotEmpty;
   }
 
   /// Default estimated time for takeaway orders (in minutes)

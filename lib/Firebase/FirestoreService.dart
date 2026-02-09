@@ -33,8 +33,18 @@ class TableOrderMismatchException implements Exception {
   String toString() => 'Table $tableNumber order mismatch. Expected: $expectedOrderId';
 }
 
+class InvalidOrderException implements Exception {
+  final String message;
+  InvalidOrderException(this.message);
+  @override
+  String toString() => 'Invalid order: $message';
+}
+
 class FirestoreService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  static const int _maxItemsPerOrder = 50;
+  static const int _maxQuantityPerItem = 99;
+  static const Duration _defaultQrSessionTtl = Duration(hours: 2);
 
   // ============================================
   // VALIDATION HELPERS
@@ -233,6 +243,97 @@ class FirestoreService {
     });
     
     return nextNumber;
+  }
+
+  // ============================================
+  // QR SESSION OPERATIONS
+  // ============================================
+
+  /// Creates or reuses an active QR session for a table.
+  /// Ensures only one active session per table and extends expiry on reuse.
+  static Future<Map<String, dynamic>> createOrReuseQrSession({
+    required String branchId,
+    required String tableNumber,
+    Duration ttl = _defaultQrSessionTtl,
+  }) async {
+    final now = DateTime.now();
+    final expiresAt = Timestamp.fromDate(now.add(ttl));
+
+    final branchRef = _firestore.collection('Branch').doc(branchId);
+    final branchDoc = await branchRef.get();
+
+    if (!branchDoc.exists) {
+      throw OrderNotFoundException('Branch not found: $branchId');
+    }
+
+    final branchData = branchDoc.data() as Map<String, dynamic>;
+    final tables = branchData['Tables'] as Map<String, dynamic>? ?? {};
+    final tableData = tables[tableNumber] as Map<String, dynamic>?;
+
+    if (tableData == null) {
+      throw TableOrderMismatchException(tableNumber, null);
+    }
+
+    final existingSessionSnapshot = await _firestore
+        .collection('qr_sessions')
+        .where('branchId', isEqualTo: branchId)
+        .where('tableNumber', isEqualTo: tableNumber)
+        .where('isActive', isEqualTo: true)
+        .where('isBillLocked', isEqualTo: false)
+        .limit(1)
+        .get();
+
+    if (existingSessionSnapshot.docs.isNotEmpty) {
+      final sessionDoc = existingSessionSnapshot.docs.first;
+      final sessionData = sessionDoc.data();
+      final sessionExpiry = (sessionData['expiresAt'] as Timestamp?)?.toDate();
+      final isExpired = sessionExpiry != null && now.isAfter(sessionExpiry);
+
+      if (!isExpired) {
+        await sessionDoc.reference.update({
+          'expiresAt': expiresAt,
+          'lastActivity': FieldValue.serverTimestamp(),
+        });
+        return {
+          'id': sessionDoc.id,
+          ...sessionData,
+          'expiresAt': expiresAt,
+        };
+      }
+
+      await sessionDoc.reference.update({
+        'isActive': false,
+        'expiredAt': FieldValue.serverTimestamp(),
+      });
+    }
+
+    final newSessionRef = _firestore.collection('qr_sessions').doc();
+    final sessionData = <String, dynamic>{
+      'branchId': branchId,
+      'tableNumber': tableNumber,
+      'isActive': true,
+      'isBillLocked': false,
+      'createdAt': FieldValue.serverTimestamp(),
+      'lastActivity': FieldValue.serverTimestamp(),
+      'expiresAt': expiresAt,
+      'orderIds': <String>[],
+      'totalOrderCount': 0,
+    };
+
+    await newSessionRef.set(sessionData);
+
+    return {
+      'id': newSessionRef.id,
+      ...sessionData,
+      'expiresAt': expiresAt,
+    };
+  }
+
+  /// Updates session activity timestamp (keep-alive).
+  static Future<void> touchQrSession(String sessionId) async {
+    await _firestore.collection('qr_sessions').doc(sessionId).update({
+      'lastActivity': FieldValue.serverTimestamp(),
+    });
   }
 
   // ============================================
@@ -594,6 +695,33 @@ class FirestoreService {
     String? customerPhone,
   }) async {
     return await _firestore.runTransaction((transaction) async {
+      if (items.isEmpty) {
+        throw InvalidOrderException('Cart is empty');
+      }
+
+      if (items.length > _maxItemsPerOrder) {
+        throw InvalidOrderException('Too many items in order');
+      }
+
+      double calculatedTotal = 0.0;
+      for (final item in items) {
+        final quantity = (item['quantity'] as num?)?.toInt() ?? 0;
+        if (quantity <= 0 || quantity > _maxQuantityPerItem) {
+          throw InvalidOrderException('Invalid quantity for ${item['name'] ?? 'item'}');
+        }
+
+        final price = (item['price'] as num?)?.toDouble();
+        if (price == null || price < 0) {
+          throw InvalidOrderException('Invalid price for ${item['name'] ?? 'item'}');
+        }
+
+        calculatedTotal += price * quantity;
+      }
+
+      if (calculatedTotal <= 0) {
+        throw InvalidOrderException('Total must be greater than zero');
+      }
+
       // Validate QR session
       final sessionRef = _firestore.collection('qr_sessions').doc(sessionId);
       final sessionDoc = await transaction.get(sessionRef);
@@ -656,8 +784,8 @@ class FirestoreService {
         'Order_type': OrderType.dineIn,
         'tableNumber': tableNumber,
         'items': items,
-        'subtotal': totalAmount,
-        'totalAmount': totalAmount,
+        'subtotal': calculatedTotal,
+        'totalAmount': calculatedTotal,
         'status': OrderStatus.preparing,
         'paymentStatus': PaymentStatus.unpaid,
         'timestamp': FieldValue.serverTimestamp(),
@@ -666,6 +794,7 @@ class FirestoreService {
         'version': 1,
         'placedByCustomer': true,
         'qrSessionId': sessionId,
+        'clientReportedTotal': totalAmount,
         // Multi-order tracking fields
         'orderType': orderSequence == 1 ? 'initial' : 'addon',
         'orderSequence': orderSequence,
