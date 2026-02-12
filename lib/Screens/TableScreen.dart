@@ -1198,7 +1198,9 @@ class _OrderScreenState extends State<OrderScreen> {
     _isAddingToExistingOrder =
         widget.isAddingToExisting || (_currentOrderId != null);
 
-    _initializeData();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeData();
+    });
     _startOrResetTimer();
 
     // Debounced search listener to prevent rapid rebuilds
