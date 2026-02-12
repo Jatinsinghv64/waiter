@@ -1164,7 +1164,6 @@ class _OrderScreenState extends State<OrderScreen> {
   // New category-related variables
   Set<String> _expandedCategories = <String>{};
   bool _isLoadingCart = false;
-  bool _isLoadingCart = false;
   bool _isInitializing = true; // Track if initial data load is complete
 
   // Add this variable to track current order ID
@@ -1357,7 +1356,6 @@ class _OrderScreenState extends State<OrderScreen> {
           await FirestoreService.addToExistingOrder(
             orderId: _currentOrderId!,
             newItems: _cartItems,
-            additionalAmount: _totalAmount,
             expectedVersion: _currentOrderVersion,
           );
           _showSuccessSnackbar('Items added to order successfully!');
@@ -1387,10 +1385,10 @@ class _OrderScreenState extends State<OrderScreen> {
         return;
       }
 
+      final newOrderId = await FirestoreService.createDineInOrder(
         branchId: branchId,
         tableNumber: widget.tableNumber,
         items: _cartItems,
-        // totalAmount removed - server calculates it
         placedByUserId: userProvider.userEmail,
       );
 

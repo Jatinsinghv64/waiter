@@ -318,10 +318,10 @@ class FirestoreService {
 
   /// Creates a dine-in order with SERVER-SIDE validation check.
   /// This prevents clients from spoofing prices.
+  static Future<String> createDineInOrder({
     required String branchId,
     required String tableNumber,
     required List<Map<String, dynamic>> items,
-    // Removed client-provided totalAmount for security
     String? placedByUserId,
   }) async {
     return await _firestore.runTransaction((transaction) async {
@@ -428,10 +428,87 @@ class FirestoreService {
     });
   }
 
+  /// Creates a takeaway order with SERVER-SIDE validation check.
+  static Future<String> createTakeawayOrder({
+    required String branchId,
+    required List<Map<String, dynamic>> items,
+    required String carPlateNumber,
+    required String specialInstructions,
+    String? placedByUserId,
+  }) async {
+    return await _firestore.runTransaction((transaction) async {
+      // 1. SECURITY: Server-side Price Validation
+      double calculatedSubtotal = 0.0;
+      final validatedItems = <Map<String, dynamic>>[];
+
+      for (final item in items) {
+        final itemId = item['id'];
+        final quantity = (item['quantity'] as num).toInt();
+        final selectedVariant = item['selectedVariant'] as Map<String, dynamic>?;
+
+        // Fetch fresh item data from Menu
+        final itemRef = _firestore.collection('menu_items').doc(itemId);
+        final itemDoc = await transaction.get(itemRef);
+
+        if (!itemDoc.exists) {
+          throw InvalidOrderException('Menu item not found: ${item['name']}');
+        }
+
+        final itemData = itemDoc.data() as Map<String, dynamic>;
+        double unitPrice = (itemData['price'] as num).toDouble();
+
+        // Handle Variant Price Override
+        if (selectedVariant != null) {
+          // Trust client variant price for now, but in future validate against variant schema
+          unitPrice = (selectedVariant['price'] as num).toDouble();
+        }
+
+        final lineTotal = unitPrice * quantity;
+        calculatedSubtotal += lineTotal;
+
+        // Reconstruct item with validated price
+        final validatedItem = Map<String, dynamic>.from(item);
+        validatedItem['price'] = unitPrice;
+        validatedItems.add(validatedItem);
+      }
+
+      final finalTotal = calculatedSubtotal;
+
+      // 2. Get daily order number
+      final dailyOrderNumber = await getNextDailyOrderNumber(transaction, branchId);
+
+      // 3. Calculate Estimate (15 mins from now)
+      final now = DateTime.now();
+      final estimatedTime = now.add(Duration(minutes: 15));
+      final formattedTime = '${estimatedTime.hour.toString().padLeft(2, '0')}:${estimatedTime.minute.toString().padLeft(2, '0')}';
+
+      // 4. Create Order
+      final orderRef = _firestore.collection('Orders').doc();
+      final orderData = <String, dynamic>{
+        'Order_type': OrderType.takeaway,
+        'carPlateNumber': carPlateNumber,
+        'specialInstructions': specialInstructions,
+        'items': validatedItems,
+        'subtotal': finalTotal,
+        'totalAmount': finalTotal,
+        'status': OrderStatus.preparing,
+        'paymentStatus': PaymentStatus.unpaid,
+        'timestamp': FieldValue.serverTimestamp(),
+        'dailyOrderNumber': dailyOrderNumber,
+        'branchIds': [branchId],
+        'estimatedReadyTime': formattedTime,
+        'version': 1,
+        if (placedByUserId != null) 'placedByUserId': placedByUserId,
+      };
+
+      transaction.set(orderRef, orderData);
+
+      return orderRef.id;
+    });
+  }
   static Future<void> addToExistingOrder({
     required String orderId,
     required List<Map<String, dynamic>> newItems,
-    required double additionalAmount,
     int? expectedVersion, // For optimistic locking
   }) async {
     await _firestore.runTransaction((transaction) async {

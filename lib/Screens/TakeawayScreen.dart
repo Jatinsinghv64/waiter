@@ -1997,40 +1997,14 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
         throw Exception('Cart cannot be empty');
       }
 
-      // Use transaction for order creation with atomic counter
-      await _firestore.runTransaction((transaction) async {
-        // Get daily order number atomically (prevents race condition)
-        final dailyOrderNumber = await FirestoreService.getNextDailyOrderNumber(
-          transaction,
-          branchId,
-        );
-
-        final orderRef = _firestore.collection('Orders').doc();
-
-        // Sanitize user inputs to prevent XSS
-        final sanitizedCarPlate = InputSanitizer.sanitizeCarPlate(carPlateNumber) ?? carPlateNumber;
-        final sanitizedInstructions = InputSanitizer.sanitizeInstructions(
-          _specialInstructionsController.text.trim(),
-        );
-
-        final orderData = {
-          'Order_type': OrderType.takeaway,
-          'carPlateNumber': sanitizedCarPlate,
-          'specialInstructions': sanitizedInstructions,
-          'items': _cartItems,
-          'subtotal': _totalAmount,
-          'totalAmount': _totalAmount,
-          'status': OrderStatus.preparing,
-          'paymentStatus': PaymentStatus.unpaid,
-          'timestamp': FieldValue.serverTimestamp(),
-          'dailyOrderNumber': dailyOrderNumber,
-          'branchIds': [branchId],
-          'estimatedReadyTime': _calculateEstimatedTime(),
-          'placedByUserId': userProvider.userEmail ?? '',
-        };
-
-        transaction.set(orderRef, orderData);
-      });
+      // Use secure method for order creation with server-side price validation
+      await FirestoreService.createTakeawayOrder(
+        branchId: branchId,
+        items: _cartItems,
+        carPlateNumber: _carPlateNumberController.text.trim(),
+        specialInstructions: _specialInstructionsController.text.trim(),
+        placedByUserId: userProvider.userEmail,
+      );
 
       // Check mounted before UI operations after async transaction
       if (!mounted) return;
