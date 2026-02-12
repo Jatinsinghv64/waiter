@@ -11,6 +11,7 @@ import 'OrderDetailScreen.dart';
 import 'ProfileScreen.dart';
 import 'package:provider/provider.dart';
 import '../Providers/UserProvider.dart';
+import '../Providers/MenuProvider.dart';
 import '../constants.dart';
 import '../utils.dart';
 
@@ -54,6 +55,15 @@ class _TablesScreenState extends State<TablesScreen>
       vsync: this,
     );
     _statsController.forward();
+    
+    // Trigger lazy migration once when screen loads
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final branchId = userProvider.currentBranch;
+      if (branchId != null) {
+        FirestoreService.migrateTablesToSubcollection(branchId);
+      }
+    });
   }
 
   @override
@@ -162,24 +172,18 @@ class _TablesScreenState extends State<TablesScreen>
     return Scaffold(
       body: Container(
         color: Color(0xFFF5F6F8),
-        child: StreamBuilder<DocumentSnapshot>(
-          stream: _firestore.collection('Branch').doc(branchId).snapshots(),
+        child: StreamBuilder<List<Map<String, dynamic>>>(
+          stream: FirestoreService.getBranchTablesStream(branchId),
           builder: (context, snapshot) {
             if (snapshot.hasError) {
               return _buildErrorState();
             }
 
-            if (!snapshot.hasData || !snapshot.data!.exists) {
-              // Only return loading if we are truly waiting,
-              // if it doesn't exist it might be a configured branch issue
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return _buildLoadingState();
-              }
-              return Center(child: Text("Branch '$branchId' not found."));
+            if (!snapshot.hasData) {
+              return _buildLoadingState();
             }
 
-            final branchData = snapshot.data!.data() as Map<String, dynamic>;
-            final tables = branchData['Tables'] as Map<String, dynamic>? ?? {};
+            final tables = snapshot.data!;
             final filteredTables = _getFilteredTablesList(tables);
 
             return RefreshIndicator(
@@ -397,7 +401,7 @@ class _TablesScreenState extends State<TablesScreen>
     );
   }
 
-  Widget _buildQuickStats(Map<String, dynamic> tables) {
+  Widget _buildQuickStats(List<Map<String, dynamic>> tables) {
     return SliverToBoxAdapter(
       // Using SlideTransition + FadeTransition with child caching for better performance
       child: SlideTransition(
@@ -482,7 +486,7 @@ class _TablesScreenState extends State<TablesScreen>
     );
   }
 
-  Widget _buildFilterChips(Map<String, dynamic> tables) {
+  Widget _buildFilterChips(List<Map<String, dynamic>> tables) {
     final filterData = [
       {'label': 'All', 'value': 'all', 'count': tables.length},
       {
@@ -647,7 +651,7 @@ class _TablesScreenState extends State<TablesScreen>
     );
   }
 
-  Widget _buildTablesGrid(List<MapEntry<String, dynamic>> filteredTables) {
+  Widget _buildTablesGrid(List<Map<String, dynamic>> filteredTables) {
     return SliverLayoutBuilder(
       builder: (context, constraints) {
         // Calculate optimal column count based on available width
@@ -679,11 +683,11 @@ class _TablesScreenState extends State<TablesScreen>
               childAspectRatio: childAspectRatio,
             ),
             delegate: SliverChildBuilderDelegate((context, index) {
-              final entry = filteredTables[index];
+              final tableData = filteredTables[index];
               return _buildTableCard(
                 context,
-                entry.key,
-                entry.value as Map<String, dynamic>,
+                tableData['tableNumber'], // Ensure ID was mapped
+                tableData,
               );
             }, childCount: filteredTables.length),
           ),
@@ -692,18 +696,18 @@ class _TablesScreenState extends State<TablesScreen>
     );
   }
 
-  Widget _buildTablesList(List<MapEntry<String, dynamic>> filteredTables) {
+  Widget _buildTablesList(List<Map<String, dynamic>> filteredTables) {
     return SliverPadding(
       padding: EdgeInsets.symmetric(horizontal: 20),
       sliver: SliverList(
         delegate: SliverChildBuilderDelegate((context, index) {
-          final entry = filteredTables[index];
+          final tableData = filteredTables[index];
           return Padding(
             padding: EdgeInsets.only(bottom: 12),
             child: _buildTableListItem(
               context,
-              entry.key,
-              entry.value as Map<String, dynamic>,
+              tableData['tableNumber'],
+              tableData,
             ),
           );
         }, childCount: filteredTables.length),
@@ -1062,15 +1066,14 @@ class _TablesScreenState extends State<TablesScreen>
     );
   }
 
-  List<MapEntry<String, dynamic>> _getFilteredTablesList(
-    Map<String, dynamic> tables,
+  List<Map<String, dynamic>> _getFilteredTablesList(
+    List<Map<String, dynamic>> tables,
   ) {
     if (_selectedFilter == 'all') {
-      return tables.entries.toList();
+      return tables;
     }
 
-    return tables.entries.where((entry) {
-      final tableData = entry.value as Map<String, dynamic>;
+    return tables.where((tableData) {
       final status = tableData['status']?.toString() ?? 'available';
       return status == _selectedFilter;
     }).toList();
@@ -1105,9 +1108,8 @@ class _TablesScreenState extends State<TablesScreen>
     }
   }
 
-  int _getStatusCount(Map<String, dynamic> tables, String targetStatus) {
-    return tables.values.where((value) {
-      final tableData = value as Map<String, dynamic>;
+  int _getStatusCount(List<Map<String, dynamic>> tables, String targetStatus) {
+    return tables.where((tableData) {
       final status = tableData['status']?.toString() ?? 'available';
       return status == targetStatus;
     }).length;
@@ -1159,9 +1161,9 @@ class _OrderScreenState extends State<OrderScreen> {
   DateTime? _occupiedTime;
 
   // New category-related variables
-  List<Map<String, dynamic>> _categories = [];
+  // New category-related variables
   Set<String> _expandedCategories = <String>{};
-  bool _isLoadingCategories = false;
+  bool _isLoadingCart = false;
   bool _isLoadingCart = false;
   bool _isInitializing = true; // Track if initial data load is complete
 
@@ -1215,8 +1217,22 @@ class _OrderScreenState extends State<OrderScreen> {
 
   Future<void> _initializeData() async {
     try {
-      // Load categories FIRST - needed for menu display to prevent "Other Items" flash
-      await _loadCategories();
+      // Load categories using Provider
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final branchId = userProvider.currentBranch;
+      if (branchId != null) {
+        // Trigger load but don't await if we want to show cached data immediately
+        // or await if we want fresh data
+        final menuProvider = Provider.of<MenuProvider>(context, listen: false);
+        await menuProvider.loadCategories(branchId);
+        
+        if (mounted && menuProvider.categories.isNotEmpty && _expandedCategories.isEmpty) {
+           setState(() {
+             _expandedCategories.add(menuProvider.categories[0]['name']);
+           });
+        }
+      }
+      
       await _loadCartItems();
       _setupListeners();
     } catch (e) {
@@ -1726,54 +1742,7 @@ class _OrderScreenState extends State<OrderScreen> {
     });
   }
 
-  // Load categories from Firestore
-  Future<void> _loadCategories() async {
-    setState(() => _isLoadingCategories = true);
 
-    try {
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      final branchId = userProvider.currentBranch;
-
-      if (branchId == null) {
-        setState(() => _isLoadingCategories = false);
-        return;
-      }
-
-      // Load categories
-      final categoriesSnapshot = await _firestore
-          .collection('menu_categories')
-          .where('branchIds', arrayContains: branchId)
-          .where('isActive', isEqualTo: true)
-          .orderBy('sortOrder')
-          .get();
-
-      if (!mounted) return;
-
-      setState(() {
-        _categories = categoriesSnapshot.docs
-            .map(
-              (doc) => {
-                'id': doc.id,
-                'name': doc.data()['name'] ?? 'Unknown',
-                'imageUrl': doc.data()['imageUrl'] ?? '',
-                'sortOrder': doc.data()['sortOrder'] ?? 0,
-              },
-            )
-            .toList();
-        _isLoadingCategories = false;
-
-        // Auto-expand first category if any exist
-        if (_categories.isNotEmpty) {
-          _expandedCategories.add(_categories[0]['name']);
-        }
-      });
-    } catch (e) {
-      print('Error loading categories: $e');
-      if (mounted) {
-        setState(() => _isLoadingCategories = false);
-      }
-    }
-  }
 
   void _startOrResetTimer() {
     _timer?.cancel();
@@ -2724,226 +2693,234 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
-  // Updated _buildMenuList with category-based collapsible UI
+  // Updated _buildMenuList with category-based collapsible UI using MenuProvider
   Widget _buildMenuList({int crossAxisCount = 2}) {
-    // Block rendering during initialization to prevent "Other Items" flash
-    if (_isLoadingCategories || _isInitializing) {
-      return Center(child: CircularProgressIndicator());
-    }
-
-    final userProvider = Provider.of<UserProvider>(context, listen: false);
-    final branchId = userProvider.currentBranch;
-
-    if (branchId == null) {
-      return Center(child: Text('Please select a branch'));
-    }
-
-    // Show retry UI if categories failed to load
-    if (_categories.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.error_outline, size: 48, color: Colors.grey[400]),
-            SizedBox(height: 16),
-            Text(
-              'Failed to load menu categories',
-              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-            ),
-            SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: () {
-                setState(() => _isLoadingCategories = true);
-                _loadCategories();
-              },
-              icon: Icon(Icons.refresh),
-              label: Text('Retry'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: primaryColor,
-                foregroundColor: Colors.white,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return StreamBuilder<QuerySnapshot>(
-      stream: _firestore
-          .collection('menu_items')
-          .where('isAvailable', isEqualTo: true)
-          .where('branchIds', arrayContains: branchId)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
+    // Helper to build list content to avoid nesting hell
+    return Consumer<MenuProvider>(
+      builder: (context, menuProvider, child) {
+        if (menuProvider.isLoading || _isInitializing) {
           return Center(child: CircularProgressIndicator());
         }
 
-        final menuItems = snapshot.data!.docs;
+        final categories = menuProvider.categories;
+        final userProvider = Provider.of<UserProvider>(context, listen: false);
+        final branchId = userProvider.currentBranch;
 
-        // Filter items based on search query
-        final filteredItems = menuItems.where((item) {
-          if (_searchQuery.isEmpty) return true;
-          final itemData = item.data() as Map<String, dynamic>;
-          final name = itemData['name']?.toString().toLowerCase() ?? '';
-          final description =
-              itemData['description']?.toString().toLowerCase() ?? '';
-          final category = itemData['category']?.toString().toLowerCase() ?? '';
-
-          return name.contains(_searchQuery) ||
-              description.contains(_searchQuery) ||
-              category.contains(_searchQuery);
-        }).toList();
-
-        if (filteredItems.isEmpty && _searchQuery.isNotEmpty) {
-          return _buildNoResultsWidget();
+        if (branchId == null) {
+          return Center(child: Text('Please select a branch'));
         }
 
-        // Group items by category ID instead of name for better matching
-        Map<String, List<QueryDocumentSnapshot>> categorizedItems = {};
-
-        // First, create empty lists for all categories
-        for (var category in _categories) {
-          categorizedItems[category['id']] = [];
+        // Show retry UI if categories failed to load or are empty
+        if (categories.isEmpty) {
+           // It might be that there are really no categories, or load failed.
+           // MenuProvider should ideally track error state. For now assuming empty means empty.
+           if (menuProvider.isLoading) return Center(child: CircularProgressIndicator());
+           
+           return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.restaurant_menu, size: 48, color: Colors.grey[400]),
+                SizedBox(height: 16),
+                Text(
+                  'No menu categories found',
+                  style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                ),
+                SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    menuProvider.loadCategories(branchId);
+                  },
+                  icon: Icon(Icons.refresh),
+                  label: Text('Retry'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryColor,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          );
         }
 
-        // Add "Other" category for items that don't match
-        categorizedItems['other'] = [];
+        return StreamBuilder<QuerySnapshot>(
+          stream: _firestore
+              .collection('menu_items')
+              .where('isAvailable', isEqualTo: true)
+              .where('branchIds', arrayContains: branchId)
+              .snapshots(),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) {
+              return Center(child: CircularProgressIndicator());
+            }
 
-        // Then add items to their respective categories
-        for (var item in filteredItems) {
-          final itemData = item.data() as Map<String, dynamic>;
-          final itemCategoryId = itemData['categoryId']
-              ?.toString(); // Try categoryId first
-          final itemCategoryName = itemData['category']
-              ?.toString(); // Then try category name
+            final menuItems = snapshot.data!.docs;
 
-          bool itemCategorized = false;
+            // Filter items based on search query
+            final filteredItems = menuItems.where((item) {
+              if (_searchQuery.isEmpty) return true;
+              final itemData = item.data() as Map<String, dynamic>;
+              final name = itemData['name']?.toString().toLowerCase() ?? '';
+              final description =
+                  itemData['description']?.toString().toLowerCase() ?? '';
+              final category = itemData['category']?.toString().toLowerCase() ?? '';
 
-          // Try to match by category ID
-          if (itemCategoryId != null &&
-              categorizedItems.containsKey(itemCategoryId)) {
-            categorizedItems[itemCategoryId]!.add(item);
-            itemCategorized = true;
-          }
-          // Try to match by category name
-          else if (itemCategoryName != null) {
-            for (var category in _categories) {
-              if (category['name'] == itemCategoryName) {
-                categorizedItems[category['id']]!.add(item);
+              return name.contains(_searchQuery) ||
+                  description.contains(_searchQuery) ||
+                  category.contains(_searchQuery);
+            }).toList();
+
+            if (filteredItems.isEmpty && _searchQuery.isNotEmpty) {
+              return _buildNoResultsWidget();
+            }
+
+            // Group items by category ID instead of name for better matching
+            Map<String, List<QueryDocumentSnapshot>> categorizedItems = {};
+
+            // First, create empty lists for all categories
+            for (var category in categories) {
+              categorizedItems[category['id']] = [];
+            }
+
+            // Add "Other" category for items that don't match
+            categorizedItems['other'] = [];
+
+            // Then add items to their respective categories
+            for (var item in filteredItems) {
+              final itemData = item.data() as Map<String, dynamic>;
+              final itemCategoryId = itemData['categoryId']
+                  ?.toString(); // Try categoryId first
+              final itemCategoryName = itemData['category']
+                  ?.toString(); // Then try category name
+
+              bool itemCategorized = false;
+
+              // Try to match by category ID
+              if (itemCategoryId != null &&
+                  categorizedItems.containsKey(itemCategoryId)) {
+                categorizedItems[itemCategoryId]!.add(item);
                 itemCategorized = true;
-                break;
+              }
+              // Try to match by category name
+              else if (itemCategoryName != null) {
+                for (var category in categories) {
+                  if (category['name'] == itemCategoryName) {
+                    categorizedItems[category['id']]!.add(item);
+                    itemCategorized = true;
+                    break;
+                  }
+                }
+              }
+
+              // If still not categorized, put in "Other"
+              if (!itemCategorized) {
+                categorizedItems['other']!.add(item);
               }
             }
-          }
 
-          // If still not categorized, put in "Other"
-          if (!itemCategorized) {
-            categorizedItems['other']!.add(item);
-          }
-        }
+            return ListView.builder(
+              padding: EdgeInsets.all(16),
+              itemCount:
+                  categories.length +
+                  (categorizedItems['other']!.isNotEmpty ? 1 : 0) +
+                  1, // Add 1 for the header
+              itemBuilder: (context, index) {
+                // Header with Expand/Collapse All
+                if (index == 0) {
+                  final isAllExpanded = categories.every(
+                    (c) => _expandedCategories.contains(c['name']),
+                  );
 
-        return ListView.builder(
-          padding: EdgeInsets.all(16),
-          itemCount:
-              _categories.length +
-              (categorizedItems['other']!.isNotEmpty ? 1 : 0) +
-              1, // Add 1 for the header
-          itemBuilder: (context, index) {
-            // Header with Expand/Collapse All
-            if (index == 0) {
-              final isAllExpanded = _categories.every(
-                (c) => _expandedCategories.contains(c['name']),
-              );
-
-              return Padding(
-                padding: EdgeInsets.only(bottom: 12),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Menu Categories',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey[800],
-                      ),
-                    ),
-                    InkWell(
-                      onTap: () {
-                        setState(() {
-                          if (isAllExpanded) {
-                            _expandedCategories.clear();
-                          } else {
-                            _expandedCategories.addAll(
-                              _categories.map((c) => c['name'] as String),
-                            );
-                          }
-                        });
-                      },
-                      borderRadius: BorderRadius.circular(8),
-                      child: Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
+                  return Padding(
+                    padding: EdgeInsets.only(bottom: 12),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Menu Categories',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey[800],
+                          ),
                         ),
-                        decoration: BoxDecoration(
-                          color: primaryColor.withOpacity(0.1),
+                        InkWell(
+                          onTap: () {
+                            setState(() {
+                              if (isAllExpanded) {
+                                _expandedCategories.clear();
+                              } else {
+                                _expandedCategories.addAll(
+                                  categories.map((c) => c['name'] as String),
+                                );
+                              }
+                            });
+                          },
                           borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              isAllExpanded ? 'Collapse All' : 'Expand All',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                color: primaryColor,
-                              ),
+                          child: Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
                             ),
-                            SizedBox(width: 4),
-                            Icon(
-                              isAllExpanded
-                                  ? Icons.unfold_less
-                                  : Icons.unfold_more,
-                              size: 16,
-                              color: primaryColor,
+                            decoration: BoxDecoration(
+                              color: primaryColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
                             ),
-                          ],
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  isAllExpanded ? 'Collapse All' : 'Expand All',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                    color: primaryColor,
+                                  ),
+                                ),
+                                SizedBox(width: 4),
+                                Icon(
+                                  isAllExpanded
+                                      ? Icons.unfold_less
+                                      : Icons.unfold_more,
+                                  size: 16,
+                                  color: primaryColor,
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                  ],
-                ),
-              );
-            }
+                  );
+                }
 
-            // Adjust index for categories
-            final categoryIndex = index - 1;
+                // Adjust index for categories
+                final categoryIndex = index - 1;
 
-            if (categoryIndex < _categories.length) {
-              final category = _categories[categoryIndex];
-              final categoryItems = categorizedItems[category['id']] ?? [];
-              return _buildCategorySection(
-                category,
-                categoryItems,
-                crossAxisCount: crossAxisCount,
-              );
-            } else {
-              // "Other" category section
-              final otherItems = categorizedItems['other']!;
-              return _buildCategorySection(
-                {
-                  'id': 'other',
-                  'name': 'Other Items',
-                  'imageUrl': '',
-                  'sortOrder': 999,
-                },
-                otherItems,
-                crossAxisCount: crossAxisCount,
-              );
-            }
+                if (categoryIndex < categories.length) {
+                  final category = categories[categoryIndex];
+                  final categoryItems = categorizedItems[category['id']] ?? [];
+                  return _buildCategorySection(
+                    category,
+                    categoryItems,
+                    crossAxisCount: crossAxisCount,
+                  );
+                } else {
+                  // "Other" category section
+                  final otherItems = categorizedItems['other']!;
+                  return _buildCategorySection(
+                    {
+                      'id': 'other',
+                      'name': 'Other Items',
+                      'imageUrl': '',
+                      'sortOrder': 999,
+                    },
+                    otherItems,
+                    crossAxisCount: crossAxisCount,
+                  );
+                }
+              },
+            );
           },
         );
       },

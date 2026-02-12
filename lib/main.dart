@@ -20,7 +20,8 @@ import 'constants.dart';
 import 'utils.dart';
 
 import 'package:provider/provider.dart'; // Add provider import
-import 'Providers/UserProvider.dart'; // Add UserProvider import
+import 'Providers/UserProvider.dart';
+import 'Providers/MenuProvider.dart'; // Add UserProvider import
 
 // Alias for customer session screen
 // typedef CustomerSessionScreen = SessionScreen; // Removed
@@ -45,7 +46,10 @@ void main() async {
 
   runApp(
     MultiProvider(
-      providers: [ChangeNotifierProvider(create: (_) => UserProvider())],
+      providers: [
+        ChangeNotifierProvider(create: (_) => UserProvider()),
+        ChangeNotifierProvider(create: (_) => MenuProvider()),
+      ],
       child: MyApp(),
     ),
   );
