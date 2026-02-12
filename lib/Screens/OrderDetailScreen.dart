@@ -14,25 +14,45 @@ import '../constants.dart';
 class ReceiptGenerator {
   static String generateTextReceipt(Map<String, dynamic> data) {
     final buffer = StringBuffer();
+    final status = data['status']?.toString().toUpperCase() ?? '';
+
     buffer.writeln("      ZAYKA RESTAURANT      ");
+    if (status == 'CANCELLED') {
+      buffer.writeln("      *** VOID TICKET *** ");
+    } else if (status == 'PAID') {
+      buffer.writeln("      *** PAID *** ");
+    }
+
     buffer.writeln("      Order #${data['dailyOrderNumber']}      ");
     buffer.writeln("----------------------------");
     buffer.writeln("Date: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}");
     if (data['tableNumber'] != null) buffer.writeln("Table: ${data['tableNumber']}");
+    if (data['Order_type'] == 'takeaway') buffer.writeln("Type: TAKEAWAY");
     buffer.writeln("----------------------------");
 
     final items = List<Map<String, dynamic>>.from(data['items'] ?? []);
-    for (var item in items) {
-      final name = item['name'];
-      final qty = item['quantity'];
-      final price = (item['price'] as num).toDouble();
-      final total = price * qty;
-      buffer.writeln("$qty x $name");
-      buffer.writeln("    @ $price          $total");
+    if (items.isEmpty) {
+      buffer.writeln("      (No Items)      ");
+    } else {
+      for (var item in items) {
+        final name = item['name'];
+        final qty = item['quantity'];
+        final price = (item['price'] as num).toDouble();
+        final total = price * qty;
+        buffer.writeln("$qty x $name");
+        buffer.writeln("    @ $price          $total");
+      }
     }
+
     buffer.writeln("----------------------------");
     buffer.writeln("TOTAL:        ${data['totalAmount']}");
     buffer.writeln("----------------------------");
+
+    if (status == 'CANCELLED' && data['cancellationReason'] != null) {
+      buffer.writeln("Reason: ${data['cancellationReason']}");
+      buffer.writeln("----------------------------");
+    }
+
     buffer.writeln("      Thank You!      ");
     return buffer.toString();
   }
@@ -44,7 +64,13 @@ class ReceiptGenerator {
 // ==========================================
 class OrderTimerBadge extends StatefulWidget {
   final Timestamp? timestamp;
-  const OrderTimerBadge({Key? key, this.timestamp}) : super(key: key);
+  final bool isRunning;
+
+  const OrderTimerBadge({
+    Key? key,
+    this.timestamp,
+    this.isRunning = true,
+  }) : super(key: key);
 
   @override
   _OrderTimerBadgeState createState() => _OrderTimerBadgeState();
@@ -58,7 +84,23 @@ class _OrderTimerBadgeState extends State<OrderTimerBadge> {
   void initState() {
     super.initState();
     _updateTime();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _updateTime());
+    if (widget.isRunning) {
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) => _updateTime());
+    }
+  }
+
+  @override
+  void didUpdateWidget(OrderTimerBadge oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isRunning != oldWidget.isRunning) {
+      if (widget.isRunning) {
+        _timer?.cancel();
+        _timer = Timer.periodic(const Duration(seconds: 1), (_) => _updateTime());
+      } else {
+        _timer?.cancel();
+        _updateTime(); // One last update to freeze time
+      }
+    }
   }
 
   void _updateTime() {
@@ -86,13 +128,17 @@ class _OrderTimerBadgeState extends State<OrderTimerBadge> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.white24,
+        color: widget.isRunning ? Colors.white24 : Colors.green.withOpacity(0.8),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.timer, size: 14, color: Colors.white),
+          Icon(
+            widget.isRunning ? Icons.timer : Icons.check_circle_outline,
+            size: 14,
+            color: Colors.white,
+          ),
           const SizedBox(width: 4),
           Text(
             _durationString,
@@ -156,6 +202,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         final cancellationReason = orderData['cancellationReason']?.toString();
         final returnReason = orderData['returnReason']?.toString();
 
+        final bool isTimerRunning = !['served', 'paid', 'cancelled'].contains(status);
+        final bool hasItems = items.isNotEmpty;
+
         return Scaffold(
           backgroundColor: Colors.grey[50],
           appBar: AppBar(
@@ -172,9 +221,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   ],
                 ),
                 const SizedBox(width: 12),
-                // PERFORMANCE FIX: Isolated timer widget
-                if (status != 'paid' && status != 'cancelled')
-                  OrderTimerBadge(timestamp: timestamp),
+                if (status != 'cancelled')
+                  OrderTimerBadge(
+                    timestamp: timestamp,
+                    isRunning: isTimerRunning,
+                  ),
               ],
             ),
             actions: [
@@ -189,7 +240,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       value: 'print',
                       child: Row(children: [Icon(Icons.print, color: Colors.grey), SizedBox(width: 8), Text('Print Ticket')]),
                     ),
-                    if (['served', 'paid', 'prepared'].contains(status))
+                    // STRICT CHECK: Do not allow return if paid or cancelled
+                    if (['served', 'prepared'].contains(status) && paymentStatus != 'paid')
                       const PopupMenuItem(
                         value: 'return',
                         child: Row(children: [Icon(Icons.assignment_return, color: Colors.orange), SizedBox(width: 8), Text('Return / Issue')]),
@@ -230,7 +282,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   ),
                 ),
               ),
-              _buildBottomActionPanel(context, snapshot.data!.id, status, paymentStatus, orderType),
+              _buildBottomActionPanel(context, snapshot.data!.id, status, paymentStatus, orderType, hasItems),
             ],
           ),
         );
@@ -238,10 +290,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     );
   }
 
-  // ... [Keep existing UI helper methods: _buildAlertBanner, _buildOrderTimeline, _buildTimelineStep, _buildTimelineLine, _buildLocationCard, _buildItemsList, _buildFinancials] ...
-
-  // Reuse your existing UI Widget methods here.
-  // For brevity, I am pasting the AlertBanner as it's new, ensure you keep the others from previous code.
   Widget _buildAlertBanner(String title, Color color, String? subtitle) {
     return Container(
       width: double.infinity,
@@ -263,7 +311,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   Widget _buildOrderTimeline(String status, String paymentStatus) {
-    // Same as previous version
     final steps = ['pending', 'preparing', 'prepared', 'served', 'paid'];
     int currentStep = steps.indexOf(status);
     if (status == 'served' && paymentStatus == 'paid') currentStep = 4;
@@ -335,6 +382,21 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   Widget _buildItemsList(List<Map<String, dynamic>> items) {
+    if (items.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(32),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey[200]!)),
+        child: Column(
+          children: [
+            const Icon(Icons.remove_shopping_cart, size: 48, color: Colors.grey),
+            const SizedBox(height: 8),
+            const Text("No Items in Order", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+          ],
+        ),
+      );
+    }
+
     return Container(
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey[200]!)),
       child: ListView.separated(
@@ -394,8 +456,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     );
   }
 
-  Widget _buildBottomActionPanel(BuildContext context, String orderId, String status, String paymentStatus, String orderType) {
-    // Hidden for terminal states to clean up UI
+  Widget _buildBottomActionPanel(BuildContext context, String orderId, String status, String paymentStatus, String orderType, bool hasItems) {
     if (status == 'cancelled' || status == 'returned') return const SizedBox.shrink();
     if (status == 'served' && paymentStatus == 'paid') return const SizedBox.shrink();
 
@@ -426,7 +487,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               Expanded(
                 flex: 1,
                 child: OutlinedButton(
-                  onPressed: () => _handleCancel(orderId),
+                  onPressed: _isUpdating ? null : () => _handleCancel(orderId, status),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.red,
                     side: const BorderSide(color: Colors.red),
@@ -439,7 +500,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             Expanded(
               flex: 2,
               child: ElevatedButton(
-                onPressed: _isUpdating ? null : () => _handleMainAction(context, orderId, status, paymentStatus, orderType),
+                // Disable main action if updating OR if empty items (and not cancelled)
+                onPressed: (_isUpdating || (!hasItems && status != 'cancelled'))
+                    ? null
+                    : () => _handleMainAction(context, orderId, status, paymentStatus, orderType),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: primaryColor,
                   foregroundColor: Colors.white,
@@ -462,7 +526,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   // ==========================================
 
   void _handlePrint(Map<String, dynamic> data) {
-    // Uses the isolated Helper Class
     final receiptText = ReceiptGenerator.generateTextReceipt(data);
 
     showDialog(
@@ -492,7 +555,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   Future<void> _handleReturnAction(String orderId) async {
-    // Robust dialog usage
     final result = await showDialog<String>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -516,7 +578,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     if (!mounted || result == null) return;
 
     if (result == 'cancel') {
-      _handleCancel(orderId);
+      _handleCancel(orderId, 'unknown'); // Status unknown here but fine for generic cancel
     } else if (result == 'kitchen') {
       _showSendToKitchenDialog(orderId);
     }
@@ -560,7 +622,21 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     final branchId = userProvider.currentBranch!;
 
     try {
-      await FirestoreService.updateOrderStatusWithTable(branchId, orderId, 'preparing', validateTransition: false);
+      final doc = await FirebaseFirestore.instance.collection('Orders').doc(orderId).get();
+      if (!doc.exists) throw Exception("Order not found");
+
+      final data = doc.data() as Map<String, dynamic>;
+      final tableNumber = data['tableNumber']?.toString();
+      final orderType = data['Order_type']?.toString() ?? 'dine_in';
+
+      // Update Order Status AND Table Status
+      await FirestoreService.updateOrderStatusWithTable(
+          branchId,
+          orderId,
+          'preparing',
+          tableNumber: orderType == 'dine_in' ? tableNumber : null,
+          validateTransition: false
+      );
 
       await FirebaseFirestore.instance.collection('Orders').doc(orderId).update({
         'returnReason': reason.isEmpty ? 'Sent back to kitchen' : reason,
@@ -575,9 +651,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     }
   }
 
-  // ... [Keep existing helper methods: _getUndoStatus, _getMainActionText, _handleUndo, _handleMainAction, _handleCancel, _showPaymentModal, _paymentOption, _submitPayment] ...
-
-  // Re-paste logic helpers for completeness if overwriting file
   String? _getUndoStatus(String currentStatus) {
     if (currentStatus == 'preparing') return 'pending';
     if (currentStatus == 'prepared') return 'preparing';
@@ -638,13 +711,17 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     }
 
     try {
+      final doc = await FirebaseFirestore.instance.collection('Orders').doc(orderId).get();
+      final data = doc.data() as Map<String, dynamic>;
+      final tableNumber = data['tableNumber']?.toString();
+
       if (status == 'pending') {
-        await FirestoreService.updateOrderStatusWithTable(branchId, orderId, 'preparing', validateTransition: false);
+        await FirestoreService.updateOrderStatusWithTable(branchId, orderId, 'preparing', tableNumber: orderType == 'dine_in' ? tableNumber : null, validateTransition: false);
       } else if (status == 'preparing') {
-        await FirestoreService.updateOrderStatusWithTable(branchId, orderId, 'prepared', validateTransition: false);
+        await FirestoreService.updateOrderStatusWithTable(branchId, orderId, 'prepared', tableNumber: orderType == 'dine_in' ? tableNumber : null, validateTransition: false);
       } else if (status == 'prepared') {
         final email = userProvider.userEmail ?? 'unknown';
-        await FirestoreService.claimAndServeOrder(branchId: branchId, orderId: orderId, waiterEmail: email, orderType: orderType);
+        await FirestoreService.claimAndServeOrder(branchId: branchId, orderId: orderId, waiterEmail: email, orderType: orderType, tableNumber: tableNumber);
       } else if (status == 'served' && paymentStatus != 'paid') {
         _showPaymentModal(context, orderId, branchId, orderType);
       }
@@ -655,29 +732,50 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     }
   }
 
-  Future<void> _handleCancel(String orderId) async {
+  Future<void> _handleCancel(String orderId, String currentStatus) async {
     final TextEditingController reasonController = TextEditingController();
+    bool isWastage = false;
+    // Show wastage checkbox if food was likely prepared
+    bool showWastageOption = ['preparing', 'prepared', 'served'].contains(currentStatus);
+
     bool? confirm = await showDialog<bool>(
       context: context,
       builder: (BuildContext context) {
-        return AlertDialog(
-          title: Row(children: const [Icon(Icons.cancel_outlined, color: Colors.red), SizedBox(width: 8), Text('Cancel Order')]),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Are you sure you want to cancel this order?', style: TextStyle(color: Colors.grey)),
-              const SizedBox(height: 16),
-              TextField(
-                controller: reasonController,
-                decoration: InputDecoration(labelText: 'Reason (Optional)', hintText: 'e.g. Out of stock', border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
-                maxLines: 2,
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep Order')),
-            ElevatedButton(onPressed: () => Navigator.of(context).pop(true), style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white), child: const Text('Cancel Order')),
-          ],
+        return StatefulBuilder(
+            builder: (context, setState) {
+              return AlertDialog(
+                title: Row(children: const [Icon(Icons.cancel_outlined, color: Colors.red), SizedBox(width: 8), Text('Cancel Order')]),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Are you sure you want to cancel this order?', style: TextStyle(color: Colors.grey)),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: reasonController,
+                      decoration: InputDecoration(labelText: 'Reason (Optional)', hintText: 'e.g. Out of stock', border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
+                      maxLines: 2,
+                    ),
+                    if (showWastageOption) ...[
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Checkbox(
+                            value: isWastage,
+                            activeColor: Colors.red,
+                            onChanged: (val) => setState(() => isWastage = val ?? false),
+                          ),
+                          const Text("Record as Food Wastage", style: TextStyle(fontSize: 12)),
+                        ],
+                      )
+                    ]
+                  ],
+                ),
+                actions: [
+                  TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep Order')),
+                  ElevatedButton(onPressed: () => Navigator.of(context).pop(true), style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white), child: const Text('Cancel Order')),
+                ],
+              );
+            }
         );
       },
     );
@@ -707,8 +805,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         validateTransition: false,
       );
 
-      if (reasonController.text.isNotEmpty) {
-        await FirebaseFirestore.instance.collection('Orders').doc(orderId).update({'cancellationReason': reasonController.text.trim()});
+      String reason = reasonController.text.trim();
+      if (isWastage) reason += " [WASTAGE RECORDED]";
+
+      if (reason.isNotEmpty) {
+        await FirebaseFirestore.instance.collection('Orders').doc(orderId).update({'cancellationReason': reason});
       }
 
       if (mounted) {

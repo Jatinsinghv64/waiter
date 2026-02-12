@@ -55,7 +55,7 @@ class _TablesScreenState extends State<TablesScreen>
       vsync: this,
     );
     _statsController.forward();
-    
+
     // Trigger lazy migration once when screen loads
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
@@ -290,7 +290,7 @@ class _TablesScreenState extends State<TablesScreen>
   Widget _buildAppBar() {
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     final branchName = userProvider.currentBranch ?? 'Unknown';
-    
+
     return SliverAppBar(
       pinned: true,
       floating: false,
@@ -407,8 +407,8 @@ class _TablesScreenState extends State<TablesScreen>
       child: SlideTransition(
         position: Tween<Offset>(begin: Offset(0, 0.3), end: Offset.zero)
             .animate(
-              CurvedAnimation(parent: _statsController, curve: Curves.easeOut),
-            ),
+          CurvedAnimation(parent: _statsController, curve: Curves.easeOut),
+        ),
         child: FadeTransition(
           opacity: _statsController,
           child: Container(
@@ -716,10 +716,10 @@ class _TablesScreenState extends State<TablesScreen>
   }
 
   Widget _buildTableCard(
-    BuildContext context,
-    String tableNumber,
-    Map<String, dynamic> tableData,
-  ) {
+      BuildContext context,
+      String tableNumber,
+      Map<String, dynamic> tableData,
+      ) {
     final status = tableData['status']?.toString() ?? 'available';
     final seats = tableData['seats']?.toString() ?? '0';
     final currentOrderId = tableData['currentOrderId']?.toString();
@@ -815,10 +815,10 @@ class _TablesScreenState extends State<TablesScreen>
   }
 
   Widget _buildTableListItem(
-    BuildContext context,
-    String tableNumber,
-    Map<String, dynamic> tableData,
-  ) {
+      BuildContext context,
+      String tableNumber,
+      Map<String, dynamic> tableData,
+      ) {
     final status = tableData['status']?.toString() ?? 'available';
     final seats = tableData['seats']?.toString() ?? '0';
     final currentOrderId = tableData['currentOrderId']?.toString();
@@ -920,10 +920,10 @@ class _TablesScreenState extends State<TablesScreen>
   }
 
   void _showTableOptionsMenu(
-    BuildContext context,
-    String tableNumber,
-    Map<String, dynamic> tableData,
-  ) {
+      BuildContext context,
+      String tableNumber,
+      Map<String, dynamic> tableData,
+      ) {
     HapticFeedback.mediumImpact();
     showModalBottomSheet(
       context: context,
@@ -1045,12 +1045,12 @@ class _TablesScreenState extends State<TablesScreen>
   }
 
   void _navigateToOrderScreen(
-    BuildContext context,
-    String tableNumber,
-    Map<String, dynamic> tableData,
-    String? currentOrderId,
-    String status,
-  ) {
+      BuildContext context,
+      String tableNumber,
+      Map<String, dynamic> tableData,
+      String? currentOrderId,
+      String status,
+      ) {
 
     HapticFeedback.lightImpact();
     Navigator.push(
@@ -1067,8 +1067,8 @@ class _TablesScreenState extends State<TablesScreen>
   }
 
   List<Map<String, dynamic>> _getFilteredTablesList(
-    List<Map<String, dynamic>> tables,
-  ) {
+      List<Map<String, dynamic>> tables,
+      ) {
     if (_selectedFilter == 'all') {
       return tables;
     }
@@ -1226,14 +1226,14 @@ class _OrderScreenState extends State<OrderScreen> {
         // or await if we want fresh data
         final menuProvider = Provider.of<MenuProvider>(context, listen: false);
         await menuProvider.loadCategories(branchId);
-        
+
         if (mounted && menuProvider.categories.isNotEmpty && _expandedCategories.isEmpty) {
-           setState(() {
-             _expandedCategories.add(menuProvider.categories[0]['name']);
-           });
+          setState(() {
+            _expandedCategories.add(menuProvider.categories[0]['name']);
+          });
         }
       }
-      
+
       await _loadCartItems();
       _setupListeners();
     } catch (e) {
@@ -1252,10 +1252,10 @@ class _OrderScreenState extends State<OrderScreen> {
     if (branchId != null) {
       _tableStatusSubscription = FirestoreService.getTableStream(branchId, widget.tableNumber)
           .listen((snapshot) {
-            if (snapshot.exists && mounted) {
-              _handleTableUpdate(snapshot);
-            }
-          });
+        if (snapshot.exists && mounted) {
+          _handleTableUpdate(snapshot);
+        }
+      });
     }
 
     if (_currentOrderId != null) {
@@ -1361,7 +1361,7 @@ class _OrderScreenState extends State<OrderScreen> {
             expectedVersion: _currentOrderVersion,
           );
           _showSuccessSnackbar('Items added to order successfully!');
-          
+
           // Clear local cart state
           setState(() {
             _cartItems.clear();
@@ -1370,14 +1370,14 @@ class _OrderScreenState extends State<OrderScreen> {
 
           // Clear persisted cart
           await FirestoreService.clearCart(widget.tableNumber);
-          
+
           if (mounted) {
             setState(() => _isSubmittingOrder = false);
           }
           return;
         }
       }
-      
+
       // Create new order
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final branchId = userProvider.currentBranch;
@@ -1441,7 +1441,7 @@ class _OrderScreenState extends State<OrderScreen> {
     setState(() => _isCheckingOut = true);
 
     final orderId = _currentOrderId ?? widget.tableData['currentOrderId'];
-    
+
     if (orderId == null) {
       _showErrorSnackbar('No order found to process payment.');
       setState(() => _isCheckingOut = false);
@@ -1451,7 +1451,7 @@ class _OrderScreenState extends State<OrderScreen> {
     try {
       // Validate order still exists and get current data
       final orderData = await FirestoreService.validateOrderExists(orderId);
-      
+
       if (orderData == null) {
         _showErrorSnackbar('Order no longer exists.');
         setState(() {
@@ -1501,15 +1501,18 @@ class _OrderScreenState extends State<OrderScreen> {
       _existingOrderSubscription?.cancel();
       _existingOrderSubscription = null;
 
-      // Reset local state
-      setState(() {
-        _currentOrderId = null;
-        _isAddingToExistingOrder = false;
-        _existingOrderItems.clear();
-        _currentOrderStatus = '';
-        _currentPaymentStatus = 'unpaid';
-        _currentOrderVersion = 1;
-      });
+      // FIX: Force immediate UI update to prevent "stuck" state
+      if (mounted) {
+        setState(() {
+          _currentOrderId = null;
+          _isAddingToExistingOrder = false;
+          _existingOrderItems.clear();
+          _currentOrderStatus = '';
+          _currentPaymentStatus = 'unpaid';
+          _currentOrderVersion = 1;
+          _tableStatus = 'available'; // Optimistically reset table status locally
+        });
+      }
 
       _showSuccessSnackbar(
         'Payment processed successfully with ${paymentMethod.toUpperCase()}!',
@@ -1582,6 +1585,22 @@ class _OrderScreenState extends State<OrderScreen> {
       if (branchId == null) {
         _showErrorSnackbar('Branch not found.');
         return;
+      }
+
+      // FIX: Check if there is an active order ID on the table logic
+      // Use the one from state or the one passed in
+      final targetOrderId = _currentOrderId;
+
+      if (targetOrderId != null) {
+        // Cancel the ghost order to keep data clean
+        await FirestoreService.updateOrderStatusWithTable(
+            branchId,
+            targetOrderId,
+            'cancelled',
+            tableNumber: widget.tableNumber,
+            validateTransition: false,
+            actionBy: 'Manual Reset'
+        );
       }
 
       await FirestoreService.updateTableStatus(
@@ -1658,45 +1677,45 @@ class _OrderScreenState extends State<OrderScreen> {
         .snapshots()
         .listen(
           (snapshot) {
-            if (!mounted) return;
-            
-            if (!snapshot.exists) {
-              // Order was deleted externally
-              _handleOrderDeleted();
-              return;
-            }
-            
-            final orderData = snapshot.data() as Map<String, dynamic>;
-            final items = List<Map<String, dynamic>>.from(
-              orderData['items'] ?? [],
-            );
-            final status = orderData['status']?.toString() ?? '';
-            final paymentStatus =
-                orderData['paymentStatus']?.toString() ?? 'unpaid';
-            final version = (orderData['version'] as num?)?.toInt() ?? 1;
+        if (!mounted) return;
 
-            setState(() {
-              _existingOrderItems = items;
-              _currentOrderStatus = status;
-              _currentPaymentStatus = paymentStatus;
-              _currentOrderVersion = version;
-              _orderWasDeleted = false;
-            });
-          },
-          onError: (error) {
-            if (mounted) {
-              _showErrorSnackbar('Error loading order: ${error.toString()}');
-            }
-          },
+        if (!snapshot.exists) {
+          // Order was deleted externally
+          _handleOrderDeleted();
+          return;
+        }
+
+        final orderData = snapshot.data() as Map<String, dynamic>;
+        final items = List<Map<String, dynamic>>.from(
+          orderData['items'] ?? [],
         );
+        final status = orderData['status']?.toString() ?? '';
+        final paymentStatus =
+            orderData['paymentStatus']?.toString() ?? 'unpaid';
+        final version = (orderData['version'] as num?)?.toInt() ?? 1;
+
+        setState(() {
+          _existingOrderItems = items;
+          _currentOrderStatus = status;
+          _currentPaymentStatus = paymentStatus;
+          _currentOrderVersion = version;
+          _orderWasDeleted = false;
+        });
+      },
+      onError: (error) {
+        if (mounted) {
+          _showErrorSnackbar('Error loading order: ${error.toString()}');
+        }
+      },
+    );
   }
 
   /// Handle when an order is deleted externally
   void _handleOrderDeleted() {
     if (!mounted) return;
-    
+
     _showErrorSnackbar('Order was deleted. Please create a new order.');
-    
+
     setState(() {
       _orderWasDeleted = true;
       _existingOrderItems.clear();
@@ -1706,7 +1725,7 @@ class _OrderScreenState extends State<OrderScreen> {
       _isAddingToExistingOrder = false;
       _currentOrderVersion = 1;
     });
-    
+
     // Cancel the subscription since order no longer exists
     _existingOrderSubscription?.cancel();
     _existingOrderSubscription = null;
@@ -1716,20 +1735,20 @@ class _OrderScreenState extends State<OrderScreen> {
   Future<void> _saveCartItems() async {
     // Cancel any pending save
     _cartSaveDebounceTimer?.cancel();
-    
+
     // Debounce cart saves to reduce Firestore writes
     _cartSaveDebounceTimer = Timer(Duration(milliseconds: 500), () async {
       if (!mounted) return;
-      
+
       try {
         await _firestore
             .collection('carts')
             .doc('table_${widget.tableNumber}')
             .set({
-              'items': _cartItems,
-              'lastUpdated': FieldValue.serverTimestamp(),
-              'tableNumber': widget.tableNumber,
-            });
+          'items': _cartItems,
+          'lastUpdated': FieldValue.serverTimestamp(),
+          'tableNumber': widget.tableNumber,
+        });
       } catch (e) {
         // Only log in debug mode, don't show to user for cart saves
         debugPrint('Error saving cart items: $e');
@@ -1810,7 +1829,7 @@ class _OrderScreenState extends State<OrderScreen> {
           ),
           content: Text(
             'Are you sure you want to mark Table ${widget.tableNumber} as available?\n\n'
-            'This will clear any pending orders and reset the table status.',
+                'This will clear any pending orders and reset the table status.',
           ),
           actions: [
             TextButton(
@@ -2079,7 +2098,7 @@ class _OrderScreenState extends State<OrderScreen> {
                                 Expanded(
                                   child: Column(
                                     crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+                                    CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         'Total Amount',
@@ -2115,29 +2134,29 @@ class _OrderScreenState extends State<OrderScreen> {
                                   ),
                                   child: _isSubmittingOrder
                                       ? SizedBox(
-                                          width: 24,
-                                          height: 24,
-                                          child: CircularProgressIndicator(
-                                            color: Colors.white,
-                                            strokeWidth: 2,
-                                          ),
-                                        )
+                                    width: 24,
+                                    height: 24,
+                                    child: CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 2,
+                                    ),
+                                  )
                                       : Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(Icons.check_circle_outline),
-                                            SizedBox(width: 8),
-                                            Text(
-                                              _isAddingToExistingOrder
-                                                  ? 'Add Items'
-                                                  : 'Submit Order',
-                                              style: TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          ],
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.check_circle_outline),
+                                      SizedBox(width: 8),
+                                      Text(
+                                        _isAddingToExistingOrder
+                                            ? 'Add Items'
+                                            : 'Submit Order',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
                                         ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ],
                             ),
@@ -2157,13 +2176,13 @@ class _OrderScreenState extends State<OrderScreen> {
                                       : _showPaymentOptions,
                                   icon: _isCheckingOut
                                       ? Container(
-                                          width: 20,
-                                          height: 20,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.white,
-                                          ),
-                                        )
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
                                       : Icon(Icons.payment),
                                   label: Text('Pay Now - Order Served'),
                                   style: ElevatedButton.styleFrom(
@@ -2417,14 +2436,14 @@ class _OrderScreenState extends State<OrderScreen> {
           prefixIcon: Icon(Icons.search, color: primaryColor),
           suffixIcon: _searchQuery.isNotEmpty
               ? IconButton(
-                  icon: Icon(Icons.clear, color: Colors.grey),
-                  onPressed: () {
-                    _searchController.clear();
-                    setState(() {
-                      _searchQuery = '';
-                    });
-                  },
-                )
+            icon: Icon(Icons.clear, color: Colors.grey),
+            onPressed: () {
+              _searchController.clear();
+              setState(() {
+                _searchQuery = '';
+              });
+            },
+          )
               : null,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
@@ -2707,11 +2726,11 @@ class _OrderScreenState extends State<OrderScreen> {
 
         // Show retry UI if categories failed to load or are empty
         if (categories.isEmpty) {
-           // It might be that there are really no categories, or load failed.
-           // MenuProvider should ideally track error state. For now assuming empty means empty.
-           if (menuProvider.isLoading) return Center(child: CircularProgressIndicator());
-           
-           return Center(
+          // It might be that there are really no categories, or load failed.
+          // MenuProvider should ideally track error state. For now assuming empty means empty.
+          if (menuProvider.isLoading) return Center(child: CircularProgressIndicator());
+
+          return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -2816,14 +2835,14 @@ class _OrderScreenState extends State<OrderScreen> {
             return ListView.builder(
               padding: EdgeInsets.all(16),
               itemCount:
-                  categories.length +
+              categories.length +
                   (categorizedItems['other']!.isNotEmpty ? 1 : 0) +
                   1, // Add 1 for the header
               itemBuilder: (context, index) {
                 // Header with Expand/Collapse All
                 if (index == 0) {
                   final isAllExpanded = categories.every(
-                    (c) => _expandedCategories.contains(c['name']),
+                        (c) => _expandedCategories.contains(c['name']),
                   );
 
                   return Padding(
@@ -2944,10 +2963,10 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   Widget _buildCategorySection(
-    Map<String, dynamic> category,
-    List<QueryDocumentSnapshot> items, {
-    int crossAxisCount = 2,
-  }) {
+      Map<String, dynamic> category,
+      List<QueryDocumentSnapshot> items, {
+        int crossAxisCount = 2,
+      }) {
     final categoryName = category['name'] as String;
     final hasItems = items.isNotEmpty;
 
@@ -2955,7 +2974,7 @@ class _OrderScreenState extends State<OrderScreen> {
     return StatefulBuilder(
       builder: (context, setLocalState) {
         final isExpanded = _expandedCategories.contains(categoryName);
-        
+
         return Container(
           margin: EdgeInsets.only(bottom: 8),
           decoration: BoxDecoration(
@@ -2968,15 +2987,15 @@ class _OrderScreenState extends State<OrderScreen> {
               InkWell(
                 onTap: hasItems
                     ? () {
-                        // Use local setState to avoid rebuilding StreamBuilder
-                        setLocalState(() {
-                          if (isExpanded) {
-                            _expandedCategories.remove(categoryName);
-                          } else {
-                            _expandedCategories.add(categoryName);
-                          }
-                        });
-                      }
+                  // Use local setState to avoid rebuilding StreamBuilder
+                  setLocalState(() {
+                    if (isExpanded) {
+                      _expandedCategories.remove(categoryName);
+                    } else {
+                      _expandedCategories.add(categoryName);
+                    }
+                  });
+                }
                     : null,
                 borderRadius: BorderRadius.circular(10),
                 child: Container(
@@ -3050,9 +3069,9 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   Widget _buildCategoryItems(
-    List<QueryDocumentSnapshot> items, {
-    int crossAxisCount = 2,
-  }) {
+      List<QueryDocumentSnapshot> items, {
+        int crossAxisCount = 2,
+      }) {
     return Padding(
       padding: EdgeInsets.all(12),
       child: GridView.builder(
@@ -3077,8 +3096,8 @@ class _OrderScreenState extends State<OrderScreen> {
     final isPopular = itemData['isPopular'] ?? false;
     final hasVariants =
         itemData['variants'] != null &&
-        itemData['variants'] is Map &&
-        (itemData['variants'] as Map).isNotEmpty;
+            itemData['variants'] is Map &&
+            (itemData['variants'] as Map).isNotEmpty;
 
     return InkWell(
       onTap: () => hasVariants
@@ -3216,7 +3235,7 @@ class _OrderScreenState extends State<OrderScreen> {
             double variantPrice = 0.0;
             if (selectedVariant != null) {
               final variant = variants.firstWhere(
-                (v) => v['name'] == selectedVariant,
+                    (v) => v['name'] == selectedVariant,
                 orElse: () => <String, dynamic>{},
               );
               variantPrice =
@@ -3281,10 +3300,10 @@ class _OrderScreenState extends State<OrderScreen> {
                             variant['name']?.toString() ?? 'Unknown Variant';
                         final variantPrice =
                             (variant['variantprice'] as num?)?.toDouble() ??
-                            0.0;
+                                0.0;
                         final isAvailable =
                             variant['isAvailable'] ??
-                            true; // Default to true if not specified
+                                true; // Default to true if not specified
                         final isSelected = selectedVariant == variantName;
 
                         return Container(
@@ -3309,10 +3328,10 @@ class _OrderScreenState extends State<OrderScreen> {
                                 groupValue: selectedVariant,
                                 onChanged: isAvailable
                                     ? (value) {
-                                        setModalState(() {
-                                          selectedVariant = value;
-                                        });
-                                      }
+                                  setModalState(() {
+                                    selectedVariant = value;
+                                  });
+                                }
                                     : null,
                                 activeColor: primaryColor,
                               ),
@@ -3480,9 +3499,9 @@ class _OrderScreenState extends State<OrderScreen> {
     // Enhanced condition: order served + unpaid + seat occupied + order exists
     bool showPaymentButton =
         _currentOrderStatus == 'served' &&
-        _currentPaymentStatus == 'unpaid' &&
-        (_tableStatus == 'occupied' || _tableStatus == 'ordered') &&
-        _currentOrderId != null;
+            _currentPaymentStatus == 'unpaid' &&
+            (_tableStatus == 'occupied' || _tableStatus == 'ordered') &&
+            _currentOrderId != null;
 
     if (_cartItems.isEmpty && _tableStatus != 'ordered' && !showPaymentButton)
       return null;
@@ -3546,27 +3565,27 @@ class _OrderScreenState extends State<OrderScreen> {
                   ),
                   child: _isSubmittingOrder
                       ? SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2,
-                          ),
-                        )
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
+                  )
                       : Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.check_circle_outline, size: 20),
-                            SizedBox(width: 8),
-                            Text(
-                              _isAddingToExistingOrder ? 'Add Items' : 'Submit Order',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ],
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.check_circle_outline, size: 20),
+                      SizedBox(width: 8),
+                      Text(
+                        _isAddingToExistingOrder ? 'Add Items' : 'Submit Order',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
                         ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -3588,23 +3607,23 @@ class _OrderScreenState extends State<OrderScreen> {
                 ),
                 child: _isCheckingOut
                     ? CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2,
-                      )
+                  color: Colors.white,
+                  strokeWidth: 2,
+                )
                     : Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.payment, size: 20),
-                          SizedBox(width: 8),
-                          Text(
-                            'Pay Now - Order Served',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ],
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.payment, size: 20),
+                    SizedBox(width: 8),
+                    Text(
+                      'Pay Now - Order Served',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
                       ),
+                    ),
+                  ],
+                ),
               ),
             ),
 
@@ -3626,23 +3645,23 @@ class _OrderScreenState extends State<OrderScreen> {
                 ),
                 child: _isCheckingOut
                     ? CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2,
-                      )
+                  color: Colors.white,
+                  strokeWidth: 2,
+                )
                     : Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.payment, size: 20),
-                          SizedBox(width: 8),
-                          Text(
-                            'Checkout & Pay',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ],
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.payment, size: 20),
+                    SizedBox(width: 8),
+                    Text(
+                      'Checkout & Pay',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
                       ),
+                    ),
+                  ],
+                ),
               ),
             ),
         ],
@@ -3651,11 +3670,11 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   void _addToCart(
-    QueryDocumentSnapshot item,
-    String? specialInstructions, {
-    int quantity = 1,
-    String? selectedVariant,
-  }) {
+      QueryDocumentSnapshot item,
+      String? specialInstructions, {
+        int quantity = 1,
+        String? selectedVariant,
+      }) {
     setState(() {
       final itemData = item.data() as Map<String, dynamic>;
       final basePrice = (itemData['price'] as num?)?.toDouble() ?? 0.0;
@@ -3668,7 +3687,7 @@ class _OrderScreenState extends State<OrderScreen> {
           if (variants is List) {
             final variantList = List<Map<String, dynamic>>.from(variants);
             final variant = variantList.firstWhere(
-              (v) => v['name'] == selectedVariant,
+                  (v) => v['name'] == selectedVariant,
               orElse: () => <String, dynamic>{},
             );
             variantPrice = (variant['variantprice'] as num?)?.toDouble() ?? 0.0;
@@ -3753,7 +3772,7 @@ class _OrderScreenState extends State<OrderScreen> {
     // Check if order hasn't gone through proper workflow
     final bool hasSkippedSteps =
         _currentOrderStatus.isEmpty ||
-        (_currentOrderStatus != 'served' && _currentOrderStatus != 'paid');
+            (_currentOrderStatus != 'served' && _currentOrderStatus != 'paid');
 
     if (hasSkippedSteps) {
       _showPaymentWarningDialog();
