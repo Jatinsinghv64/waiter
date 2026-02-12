@@ -185,7 +185,18 @@ class FirestoreService {
               final data = doc.data();
               data['tableNumber'] = doc.id; // Ensure ID is available
               return data;
-            }).toList());
+      }).toList());
+  }
+
+  /// Gets real-time updates for a single table
+  /// SCALABLE: Listens to specific table document in subcollection
+  static Stream<DocumentSnapshot> getTableStream(String branchId, String tableNumber) {
+    return _firestore
+        .collection('Branch')
+        .doc(branchId)
+        .collection('Tables')
+        .doc(tableNumber)
+        .snapshots();
   }
 
   static Future<void> updateTableStatus(
@@ -307,11 +318,10 @@ class FirestoreService {
 
   /// Creates a dine-in order with SERVER-SIDE validation check.
   /// This prevents clients from spoofing prices.
-  static Future<String> createDineInOrder({
     required String branchId,
     required String tableNumber,
     required List<Map<String, dynamic>> items,
-    required double totalAmount, // Client provided total, we will verify/override
+    // Removed client-provided totalAmount for security
     String? placedByUserId,
   }) async {
     return await _firestore.runTransaction((transaction) async {
@@ -829,9 +839,7 @@ class FirestoreService {
   // STREAM GETTERS
   // ============================================
 
-  static Stream<DocumentSnapshot> getBranchStream(String branchId) {
-    return _firestore.collection('Branch').doc(branchId).snapshots();
-  }
+
 
   static Stream<DocumentSnapshot> getOrderStream(String orderId) {
     return _firestore.collection('Orders').doc(orderId).snapshots();

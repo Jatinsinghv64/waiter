@@ -1249,10 +1249,10 @@ class _OrderScreenState extends State<OrderScreen> {
     final branchId = userProvider.currentBranch;
 
     if (branchId != null) {
-      _tableStatusSubscription = FirestoreService.getBranchStream(branchId)
+      _tableStatusSubscription = FirestoreService.getTableStream(branchId, widget.tableNumber)
           .listen((snapshot) {
             if (snapshot.exists && mounted) {
-              _handleBranchUpdate(snapshot);
+              _handleTableUpdate(snapshot);
             }
           });
     }
@@ -1262,52 +1262,48 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
-  void _handleBranchUpdate(DocumentSnapshot snapshot) {
-    final branchData = snapshot.data() as Map<String, dynamic>;
-    final tables = branchData['Tables'] as Map<String, dynamic>?;
+  void _handleTableUpdate(DocumentSnapshot snapshot) {
+    // New logic: Listen directly to the specific table document in subcollection
+    final tableData = snapshot.data() as Map<String, dynamic>;
+    final newStatus = tableData['status']?.toString() ?? 'available';
+    final tableOrderId = tableData['currentOrderId']?.toString();
 
-    if (tables != null && tables.containsKey(widget.tableNumber)) {
-      final tableData = tables[widget.tableNumber] as Map<String, dynamic>;
-      final newStatus = tableData['status']?.toString() ?? 'available';
-      final tableOrderId = tableData['currentOrderId']?.toString();
+    setState(() {
+      _tableStatus = newStatus;
+      _startOrResetTimer();
 
-      setState(() {
-        _tableStatus = newStatus;
-        _startOrResetTimer();
+      // Case 1: Table has a new/different order
+      if (tableOrderId != null && _currentOrderId != tableOrderId) {
+        _currentOrderId = tableOrderId;
+        _isAddingToExistingOrder = true;
+        _currentOrderVersion = 1;
+        _listenToExistingOrder();
+      }
+      // Case 2: Order was completed/paid - table no longer has an order
+      else if (tableOrderId == null && _currentOrderId != null) {
+        // Order was completed - reset local state
+        _existingOrderSubscription?.cancel();
+        _existingOrderSubscription = null;
+        _currentOrderId = null;
+        _isAddingToExistingOrder = false;
+        _existingOrderItems.clear();
+        _currentOrderStatus = '';
+        _currentPaymentStatus = 'unpaid';
+        _currentOrderVersion = 1;
+        _orderWasDeleted = false;
+      }
 
-        // Case 1: Table has a new/different order
-        if (tableOrderId != null && _currentOrderId != tableOrderId) {
-          _currentOrderId = tableOrderId;
-          _isAddingToExistingOrder = true;
-          _currentOrderVersion = 1;
-          _listenToExistingOrder();
+      if (_tableStatus == 'occupied' || _tableStatus == 'ordered') {
+        final Timestamp? ts = tableData['statusTimestamp'];
+        if (ts != null) {
+          _occupiedTime = ts.toDate();
+        } else if (_occupiedTime == null) {
+          _occupiedTime = DateTime.now();
         }
-        // Case 2: Order was completed/paid - table no longer has an order
-        else if (tableOrderId == null && _currentOrderId != null) {
-          // Order was completed - reset local state
-          _existingOrderSubscription?.cancel();
-          _existingOrderSubscription = null;
-          _currentOrderId = null;
-          _isAddingToExistingOrder = false;
-          _existingOrderItems.clear();
-          _currentOrderStatus = '';
-          _currentPaymentStatus = 'unpaid';
-          _currentOrderVersion = 1;
-          _orderWasDeleted = false;
-        }
-
-        if (_tableStatus == 'occupied' || _tableStatus == 'ordered') {
-          final Timestamp? ts = tableData['statusTimestamp'];
-          if (ts != null) {
-            _occupiedTime = ts.toDate();
-          } else if (_occupiedTime == null) {
-            _occupiedTime = DateTime.now();
-          }
-        } else {
-          _occupiedTime = null;
-        }
-      });
-    }
+      } else {
+        _occupiedTime = null;
+      }
+    });
   }
 
   // Updated cart loading with error handling
@@ -1391,11 +1387,10 @@ class _OrderScreenState extends State<OrderScreen> {
         return;
       }
 
-      final newOrderId = await FirestoreService.createDineInOrder(
         branchId: branchId,
         tableNumber: widget.tableNumber,
         items: _cartItems,
-        totalAmount: _totalAmount,
+        // totalAmount removed - server calculates it
         placedByUserId: userProvider.userEmail,
       );
 
