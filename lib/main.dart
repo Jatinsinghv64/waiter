@@ -1,22 +1,47 @@
-import 'package:firebase_core/firebase_core.dart';
-import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'Firebase/firebase_options.dart';
-import 'Providers/UserProvider.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
+
 import 'Screens/LoginScreen.dart';
-import 'Screens/TableScreen.dart';
-import 'constants.dart';
+import 'Firebase/firebase_options.dart';
+import 'Screens/WelcomeScreen.dart';
+
+import 'package:provider/provider.dart'; // Add provider import
+import 'Providers/UserProvider.dart';
+import 'Providers/MenuProvider.dart'; // Add UserProvider import
+
+// Alias for customer session screen
+// typedef CustomerSessionScreen = SessionScreen; // Removed
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Firebase with platform-specific options
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  try {
+    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  runApp(const MyApp());
+    // Enable offline persistence for Firestore
+    // This allows the app to work offline and sync when connection is restored
+    FirebaseFirestore.instance.settings = const Settings(
+      persistenceEnabled: true,
+      cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+    );
+  } catch (e) {
+    debugPrint('Firebase initialization error: $e');
+    // Continue app startup - Firebase errors will be handled per-operation
+  }
+
+
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => UserProvider()),
+        ChangeNotifierProvider(create: (_) => MenuProvider()),
+      ],
+      child: MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -24,40 +49,22 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MultiProvider(
-      providers: [
-        // UserProvider handles staff details (Name, Role, Branch ID)
-        ChangeNotifierProvider(create: (_) => UserProvider()),
-      ],
-      child: MaterialApp(
-        debugShowCheckedModeBanner: false,
-        title: 'Waiter App',
-        theme: ThemeData(
-          primaryColor: AppColors.primaryColor,
-          scaffoldBackgroundColor: AppColors.backgroundColor,
-          appBarTheme: const AppBarTheme(
-            backgroundColor: AppColors.primaryColor,
-            elevation: 0,
-            centerTitle: true,
-          ),
-          // Consistent card theme for the app
-          cardTheme: CardTheme(
-            elevation: 2,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-          ),
-        ),
-        // The secure entry point determines if the user is logged in
-        home: const AuthWrapper(),
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Restaurant Server App',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
+      // onGenerateRoute logic removed for deleted customer ordering
+      home: AuthWrapper(),
     );
   }
 }
 
-/// The AuthWrapper listens to the Firebase Authentication stream.
-/// - If a user is logged in: It sends them to the TableScreen (Dashboard).
-/// - If no user is logged in: It sends them to the LoginScreen.
+
+
+
 class AuthWrapper extends StatefulWidget {
   const AuthWrapper({super.key});
 
@@ -67,43 +74,35 @@ class AuthWrapper extends StatefulWidget {
 
 class _AuthWrapperState extends State<AuthWrapper> {
   @override
-  void initState() {
-    super.initState();
-    // Pre-fetch user details if a user is already logged in (persistence)
-    final userProvider = Provider.of<UserProvider>(context, listen: false);
-    if (FirebaseAuth.instance.currentUser != null) {
-      userProvider.loadUserData();
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
-        // 1. Loading State
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
+        if (snapshot.connectionState == ConnectionState.active) {
+          User? user = snapshot.data;
+          if (user == null) {
+            return LoginScreen();
+          }
 
-        // 2. Error State
-        if (snapshot.hasError) {
-          return const Scaffold(
-            body: Center(child: Text("Authentication Error. Please restart.")),
-          );
-        }
+          // Fetch profile when user is authenticated
+          // Using addPostFrameCallback to avoid state errors during build
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            // Only fetch if not already loaded or if different user
+            final userProvider = Provider.of<UserProvider>(
+              context,
+              listen: false,
+            );
+            if (userProvider.userProfile == null && user.email != null) {
+              userProvider.fetchUserProfile(user.email!);
+            }
+          });
 
-        // 3. Authenticated State
-        if (snapshot.hasData) {
-          // User is logged in, show the Main Waiter Dashboard
-          return const TableScreen();
+          // Show welcome screen with animations, which then transitions to MainWaiterApp
+          return const WelcomeScreen();
         }
-
-        // 4. Unauthenticated State
-        return const LoginScreen();
+        return Scaffold(body: Center(child: CircularProgressIndicator()));
       },
     );
   }
 }
+

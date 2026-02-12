@@ -115,6 +115,19 @@ class AppColors {
   static const Color welcomeGradientMiddle = Color(0xFF1565C0);
   static const Color welcomeGradientEnd = Color(0xFF0D47A1);
 
+  static const Color primaryColor = Color(0xFF1E88E5); // Blue
+  static const Color secondaryColor = Color(0xFF26A69A); // Teal
+  static const Color backgroundColor = Color(0xFFF5F5F5); // Light Grey
+  static const Color errorColor = Color(0xFFD32F2F);
+  static const Color textColor = Color(0xFF212121);
+  static const Color white = Colors.white;
+
+  // Table Status Colors
+  static const Color tableAvailable = Color(0xFF4CAF50); // Green
+  static const Color tableOccupied = Color(0xFFF44336); // Red
+  static const Color tableReserved = Color(0xFFFF9800); // Orange
+  static const Color tableBilled = Color(0xFF2196F3);
+
   // Status colors
   static const Color statusPending = Color(0xFFFFA726); // Orange
   static const Color statusPreparing = Color(0xFFFF9800); // Orange darker
@@ -124,8 +137,7 @@ class AppColors {
   static const Color statusCancelled = Color(0xFFF44336); // Red
 
   // Table status colors
-  static const Color tableAvailable = Color(0xFF4CAF50); // Green
-  static const Color tableOccupied = Color(0xFFFF9800); // Orange
+
   static const Color tableOrdered = Color(0xFFF44336); // Red
   static const Color tableNeedsAttention = Color(0xFFF44336); // Red
 
