@@ -9,7 +9,7 @@ import 'Screens/ActiveOrderScreen.dart';
 import 'Screens/LoginScreen.dart';
 import 'Screens/TableScreen.dart';
 import 'Screens/TakeawayScreen.dart';
-import 'Screens/Customer/session_screen.dart';
+// import 'Screens/Customer/session_screen.dart'; // Removed
 import 'Firebase/firebase_options.dart';
 import 'package:audioplayers/audioplayers.dart'; // v5.0.0
 import 'package:vibration/vibration.dart';
@@ -23,7 +23,7 @@ import 'package:provider/provider.dart'; // Add provider import
 import 'Providers/UserProvider.dart'; // Add UserProvider import
 
 // Alias for customer session screen
-typedef CustomerSessionScreen = SessionScreen;
+// typedef CustomerSessionScreen = SessionScreen; // Removed
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -63,32 +63,13 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.blue,
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      // Handle /order route for customer web ordering
-      onGenerateRoute: (settings) {
-        // Check if this is the customer ordering route
-        if (settings.name == '/order' || 
-            Uri.base.path.contains('/order') ||
-            Uri.base.queryParameters.containsKey('session')) {
-          return MaterialPageRoute(
-            builder: (context) => const CustomerSessionScreen(),
-          );
-        }
-        // Default route
-        return MaterialPageRoute(builder: (context) => AuthWrapper());
-      },
-      home: _getInitialScreen(),
+      // onGenerateRoute logic removed for deleted customer ordering
+      home: AuthWrapper(),
     );
   }
-
-  Widget _getInitialScreen() {
-    // Check if we're on web and have a session parameter
-    final uri = Uri.base;
-    if (uri.path.contains('/order') || uri.queryParameters.containsKey('session')) {
-      return const CustomerSessionScreen();
-    }
-    return AuthWrapper();
-  }
 }
+
+
 
 
 class AuthWrapper extends StatefulWidget {
@@ -270,17 +251,31 @@ class _MainWaiterAppState extends State<MainWaiterApp>
           
           _shownPreparedOrders.add(orderId);
 
-          // Extract necessary data for popup
-          final orderDetails = {
-            'orderId': orderId,
-            'orderNumber': orderData['dailyOrderNumber']?.toString() ?? '',
-            'orderType': orderData['Order_type']?.toString() ?? OrderType.dineIn,
-            'tableNumber': orderData['tableNumber']?.toString(),
-            'customerName': orderData['customerName']?.toString(),
-            'carPlateNumber': orderData['carPlateNumber']?.toString(),
-          };
+          // Re-check status from Firestore before showing popup
+          // This prevents showing popup for orders already handled between
+          // the query snapshot and display time
+          FirebaseFirestore.instance
+              .collection('Orders')
+              .doc(orderId)
+              .get()
+              .then((freshDoc) {
+            if (!mounted) return;
+            final freshData = freshDoc.data();
+            if (freshData == null || freshData['status'] != OrderStatus.prepared) {
+              return; // Already handled, skip popup
+            }
 
-          _showPreparedOrderPopup(orderDetails);
+            final orderDetails = {
+              'orderId': orderId,
+              'orderNumber': freshData['dailyOrderNumber']?.toString() ?? '',
+              'orderType': freshData['Order_type']?.toString() ?? OrderType.dineIn,
+              'tableNumber': freshData['tableNumber']?.toString(),
+              'customerName': freshData['customerName']?.toString(),
+              'carPlateNumber': freshData['carPlateNumber']?.toString(),
+            };
+
+            _showPreparedOrderPopup(orderDetails);
+          });
         }
       }
     }
@@ -339,275 +334,312 @@ class _MainWaiterAppState extends State<MainWaiterApp>
     final String orderNumber = orderDetails['orderNumber'];
     final String orderType = orderDetails['orderType'];
     final String? tableNumber = orderDetails['tableNumber'];
-    final String? customerName = orderDetails['customerName'];
     final String? carPlateNumber = orderDetails['carPlateNumber'];
 
     final bool isTakeaway = orderType == 'takeaway';
     final Color typeColor = isTakeaway ? Colors.orange : Colors.blue;
 
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      elevation: 0,
-      backgroundColor: Colors.transparent,
-      child: Container(
-        constraints: BoxConstraints(maxWidth: 400),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black26,
-              blurRadius: 20,
-              offset: Offset(0, 10),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Header
-            Container(
-              padding: EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Colors.green, Colors.green[700]!],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+    // StreamBuilder auto-dismisses dialog when order status changes
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('Orders')
+          .doc(orderId)
+          .snapshots(),
+      builder: (context, snapshot) {
+        // Check if order status has changed (another waiter handled it)
+        if (snapshot.hasData && snapshot.data!.exists) {
+          final liveData = snapshot.data!.data() as Map<String, dynamic>;
+          final liveStatus = liveData['status'] as String? ?? '';
+          
+          if (liveStatus != OrderStatus.prepared) {
+            // Auto-dismiss: order already handled
+            final handledBy = liveData['servedBy'] as String? ??
+                liveData['paidBy'] as String? ?? '';
+            
+            // Schedule dismiss for next frame to avoid build-during-build
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (Navigator.of(context).canPop()) {
+                Navigator.of(context).pop();
+              }
+              if (mounted) {
+                final message = handledBy.isNotEmpty
+                    ? 'Order #$orderNumber already handled by $handledBy'
+                    : 'Order #$orderNumber status changed to $liveStatus';
+                ScaffoldMessenger.of(this.context).showSnackBar(
+                  SnackBar(
+                    content: Text(message),
+                    backgroundColor: Colors.orange,
+                    duration: Duration(seconds: 3),
+                  ),
+                );
+              }
+            });
+            
+            // Return loading while dismissing
+            return SizedBox.shrink();
+          }
+        }
+
+        return Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          child: Container(
+            constraints: BoxConstraints(maxWidth: 400),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black26,
+                  blurRadius: 20,
+                  offset: Offset(0, 10),
                 ),
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(20),
-                  topRight: Radius.circular(20),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      Icons.check_circle,
-                      color: Colors.white,
-                      size: 28,
-                    ),
-                  ),
-                  SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'ORDER READY!',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white,
-                            fontSize: 20,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          isTakeaway ? 'Customer Pickup' : 'Ready to Serve',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+              ],
             ),
-
-            Padding(
-              padding: EdgeInsets.all(24),
-              child: Column(
-                children: [
-                  // Order Number Large
-                  Text(
-                    'Order #$orderNumber',
-                    style: TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.w900,
-                      color: Colors.black87,
-                      letterSpacing: -0.5,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Header
+                Container(
+                  padding: EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.green, Colors.green[700]!],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(20),
+                      topRight: Radius.circular(20),
                     ),
                   ),
-                  SizedBox(height: 8),
-
-                  // Order Details Badge
-                  Container(
-                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: typeColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          isTakeaway
-                              ? Icons.directions_car
-                              : Icons.table_restaurant,
-                          color: typeColor,
-                          size: 18,
-                        ),
-                        SizedBox(width: 8),
-                        Text(
-                          isTakeaway
-                              ? (carPlateNumber != null
-                                    ? 'Car: $carPlateNumber'
-                                    : 'Takeaway')
-                              : 'Table $tableNumber',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: typeColor,
-                            fontSize: 15,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  SizedBox(height: 32),
-
-                  // Action Buttons
-                  SizedBox(
-                    width: double.infinity,
-                    height: 54,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        _markAsServed(orderId, orderType);
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
-                        elevation: 4,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.check),
-                          SizedBox(width: 8),
-                          Text(
-                            isTakeaway ? 'Mark Picked Up' : 'Mark Served',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 54,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        _markAsPaid(orderId, orderType);
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: primaryColor,
-                        foregroundColor: Colors.white,
-                        elevation: 2,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.payment),
-                          SizedBox(width: 8),
-                          Text(
-                            'Mark as Paid',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  SizedBox(height: 20),
-                  Row(
+                  child: Row(
                     children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => Navigator.of(context).pop(),
-                          style: OutlinedButton.styleFrom(
-                            padding: EdgeInsets.symmetric(vertical: 16),
-                            foregroundColor: Colors.grey[600],
-                            side: BorderSide(color: Colors.grey[300]!),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          child: Text('Dismiss'),
+                      Container(
+                        padding: EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.check_circle,
+                          color: Colors.white,
+                          size: 28,
                         ),
                       ),
-                      SizedBox(width: 12),
+                      SizedBox(width: 16),
                       Expanded(
-                        child: OutlinedButton(
-                          onPressed: () {
-                            Navigator.of(context).pop();
-                            _navigateToOrderDetails(orderId);
-                          },
-                          style: OutlinedButton.styleFrom(
-                            padding: EdgeInsets.symmetric(vertical: 16),
-                            foregroundColor: Colors.black87,
-                            side: BorderSide(color: Colors.grey[400]!),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'ORDER READY!',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white,
+                                fontSize: 20,
+                                letterSpacing: 0.5,
+                              ),
                             ),
-                          ),
-                          child: Text('View Details'),
+                            SizedBox(height: 4),
+                            Text(
+                              isTakeaway ? 'Customer Pickup' : 'Ready to Serve',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.9),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
-                ],
-              ),
+                ),
+
+                Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Column(
+                    children: [
+                      // Order Number Large
+                      Text(
+                        'Order #$orderNumber',
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.black87,
+                          letterSpacing: -0.5,
+                        ),
+                      ),
+                      SizedBox(height: 8),
+
+                      // Order Details Badge
+                      Container(
+                        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: typeColor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              isTakeaway
+                                  ? Icons.directions_car
+                                  : Icons.table_restaurant,
+                              color: typeColor,
+                              size: 18,
+                            ),
+                            SizedBox(width: 8),
+                            Text(
+                              isTakeaway
+                                  ? (carPlateNumber != null
+                                        ? 'Car: $carPlateNumber'
+                                        : 'Takeaway')
+                                  : 'Table $tableNumber',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: typeColor,
+                                fontSize: 15,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      SizedBox(height: 32),
+
+                      // Action Buttons
+                      SizedBox(
+                        width: double.infinity,
+                        height: 54,
+                        child: ElevatedButton(
+                          onPressed: () {
+                            Navigator.of(context).pop();
+                            _markAsServed(orderId, orderType);
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                            elevation: 4,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.check),
+                              SizedBox(width: 8),
+                              Text(
+                                isTakeaway ? 'Mark Picked Up' : 'Mark Served',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 54,
+                        child: ElevatedButton(
+                          onPressed: () {
+                            Navigator.of(context).pop();
+                            _markAsPaid(orderId, orderType);
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: primaryColor,
+                            foregroundColor: Colors.white,
+                            elevation: 2,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.payment),
+                              SizedBox(width: 8),
+                              Text(
+                                'Mark as Paid',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: 20),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () => Navigator.of(context).pop(),
+                              style: OutlinedButton.styleFrom(
+                                padding: EdgeInsets.symmetric(vertical: 16),
+                                foregroundColor: Colors.grey[600],
+                                side: BorderSide(color: Colors.grey[300]!),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: Text('Dismiss'),
+                            ),
+                          ),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () {
+                                Navigator.of(context).pop();
+                                _navigateToOrderDetails(orderId);
+                              },
+                              style: OutlinedButton.styleFrom(
+                                padding: EdgeInsets.symmetric(vertical: 16),
+                                foregroundColor: Colors.black87,
+                                side: BorderSide(color: Colors.grey[400]!),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: Text('View Details'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
   Future<void> _markAsServed(String orderId, String orderType) async {
     try {
-      // Fetch current order data to get table number if needed
-      final doc = await FirebaseFirestore.instance
-          .collection('Orders')
-          .doc(orderId)
-          .get();
-      final tableNumber = doc.data()?['tableNumber']?.toString();
-
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final branchId = userProvider.currentBranch;
+      final waiterEmail = userProvider.userEmail ?? FirebaseAuth.instance.currentUser?.email ?? 'unknown';
 
       if (branchId != null) {
-        await FirestoreService.updateOrderStatusWithTable(
-          branchId,
-          orderId,
-          'served',
-          tableNumber: orderType == 'dine_in' ? tableNumber : null,
+        await FirestoreService.claimAndServeOrder(
+          branchId: branchId,
+          orderId: orderId,
+          waiterEmail: waiterEmail,
+          orderType: orderType,
         );
       }
 
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -616,57 +648,73 @@ class _MainWaiterAppState extends State<MainWaiterApp>
           backgroundColor: Colors.green,
         ),
       );
+    } on OrderAlreadyClaimedException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Already handled by ${e.claimedBy}'),
+          backgroundColor: Colors.orange,
+        ),
+      );
     } catch (e) {
-      print('Error marking as served: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
   Future<void> _markAsPaid(String orderId, String orderType) async {
     try {
-      // Fetch for amount and table number
+      // Fetch for amount
       final doc = await FirebaseFirestore.instance
           .collection('Orders')
           .doc(orderId)
           .get();
       final data = doc.data();
-      final tableNumber = data?['tableNumber']?.toString();
       final amount = (data?['totalAmount'] as num?)?.toDouble() ?? 0.0;
-
-      // Default to cash if quick paying from popup (or could prompt, but let's assume cash/default flow or ask UI design.
-      // Actually previous implementation in generic Mark Paid was instant or showed options?
-      // Check ActiveOrderScreen previous implementation... it showed payment options!
-      // I should implement _showPaymentOptions or just defaulting to cash/card prompt?
-      // For now, let's keep it simple: Show existing "Payment Options" logic or just mark as paid (cash)?
-      // The button says "Mark as Paid". Ideally show options.
-      // But to save time and given user instructions, I'll update it to 'paid' status directly or show a quick bottom sheet?
-      // I'll assume direct update for now to unblock, or better:
-      // Re-use logic: 'paid' usually implies logic.
-      // I'll call processPayment with a default or 'cash' for now, or just 'quick_pay'.
-      // Actually, let's just use 'cash' as default for quick action, or better, show the bottom sheet?
-      // I'll stick to direct update to 'paid' via FirestoreService helper if I can't port the full bottom sheet UI easily.
-      // Wait, I can iterate. I'll just do the update.
 
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final branchId = userProvider.currentBranch;
+      final waiterEmail = userProvider.userEmail ?? FirebaseAuth.instance.currentUser?.email ?? 'unknown';
 
       if (branchId != null) {
-        await FirestoreService.processPayment(
+        await FirestoreService.claimAndPayOrder(
           branchId: branchId,
           orderId: orderId,
-          paymentMethod: 'cash', // Defaulting to cash for quick button
+          waiterEmail: waiterEmail,
+          paymentMethod: 'cash',
           amount: amount,
-          tableNumber: orderType == 'dine_in' ? tableNumber : null,
+          orderType: orderType,
         );
       }
 
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Order marked as PAID!'),
           backgroundColor: Colors.green,
         ),
       );
+    } on OrderAlreadyClaimedException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Already handled by ${e.claimedBy}'),
+          backgroundColor: Colors.orange,
+        ),
+      );
     } catch (e) {
-      print('Error marking as paid: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 

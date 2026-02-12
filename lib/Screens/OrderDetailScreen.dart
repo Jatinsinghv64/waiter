@@ -30,6 +30,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     final status = orderData['status']?.toString() ?? 'unknown';
     final paymentStatus = orderData['paymentStatus']?.toString() ?? 'unpaid';
     final orderType = orderData['Order_type']?.toString() ?? 'dine_in';
+    // ... items calculation and other variables ...
     final tableNumber = orderData['tableNumber']?.toString();
     final dailyOrderNumber = orderData['dailyOrderNumber']?.toString() ?? '';
     final totalAmount = (orderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
@@ -57,430 +58,519 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           ),
         ],
       ),
-      body: Container(
-        color: Colors.white,
-        child: Column(
-          children: [
-            // Order Header Card
-            Container(
-              margin: EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black12,
-                    blurRadius: 8,
-                    offset: Offset(0, 4),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isDesktop = constraints.maxWidth >= 900;
+
+          if (isDesktop) {
+            // DESKTOP / TABLET LAYOUT (Split View)
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // LEFT SIDE: Items List (60%)
+                Expanded(
+                  flex: 6,
+                  child: Container(
+                    padding: EdgeInsets.all(24),
+                    child: Column(
+                      children: [
+                        _buildItemsList(items, primaryColor, subtotal, totalAmount),
+                      ],
+                    ),
                   ),
-                ],
-              ),
-              child: Padding(
-                padding: EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Order Number and Status
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Order #$dailyOrderNumber',
-                              style: TextStyle(
-                                fontSize: 24,
-                                fontWeight: FontWeight.bold,
-                                color: primaryColor,
-                              ),
-                            ),
-                            SizedBox(height: 4),
-                            Container(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: orderType == 'takeaway'
-                                    ? Colors.orange[100]
-                                    : Colors.blue[100],
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Text(
-                                orderType.toUpperCase().replaceAll('_', ' '),
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                  color: orderType == 'takeaway'
-                                      ? Colors.orange[800]
-                                      : Colors.blue[800],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        Column(
-                          children: [
-                            // Order Status Badge
-                            Container(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: _getStatusColor(status).withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: _getStatusColor(status),
-                                  width: 2,
-                                ),
-                              ),
-                              child: Text(
-                                status.toUpperCase(),
-                                style: TextStyle(
-                                  color: _getStatusColor(status),
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ),
-                            // Payment Status Badge
-                            if (status == 'served') ...[
-                              SizedBox(height: 8),
-                              Container(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 6,
-                                ),
-                                decoration: BoxDecoration(
-                                  color:
-                                      (paymentStatus == 'paid'
-                                              ? Colors.green
-                                              : Colors.red)
-                                          .withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: paymentStatus == 'paid'
-                                        ? Colors.green
-                                        : Colors.red,
-                                    width: 2,
-                                  ),
-                                ),
-                                child: Text(
-                                  paymentStatus.toUpperCase(),
-                                  style: TextStyle(
-                                    color: paymentStatus == 'paid'
-                                        ? Colors.green
-                                        : Colors.red,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ],
-                    ),
-
-                    SizedBox(height: 16),
-                    Divider(color: Colors.grey[300]),
-                    SizedBox(height: 16),
-
-                    // Order Info Grid
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildInfoItem(
-                            icon: orderType == 'takeaway'
-                                ? Icons.shopping_bag
-                                : Icons.table_restaurant,
-                            label: orderType == 'takeaway' ? 'Pickup' : 'Table',
-                            value: orderType == 'takeaway'
-                                ? 'Counter'
-                                : (tableNumber ?? 'N/A'),
-                          ),
-                        ),
-                        Expanded(
-                          child: _buildInfoItem(
-                            icon: Icons.access_time,
-                            label: 'Ordered',
-                            value: timestamp != null
-                                ? _formatTime(timestamp.toDate())
-                                : 'Unknown',
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    // Customer Info (for takeaway)
-                    // Customer Info (for takeaway)
-                    if (orderType == 'takeaway' &&
-                        (customerName != null ||
-                            customerPhone != null ||
-                            carPlateNumber != null)) ...[
-                      SizedBox(height: 12),
-                      Row(
-                        children: [
-                          if (carPlateNumber != null)
-                            Expanded(
-                              child: _buildInfoItem(
-                                icon: Icons.directions_car,
-                                label: 'Car Plate',
-                                value: carPlateNumber,
-                              ),
-                            ),
-                          if (customerName != null)
-                            Expanded(
-                              child: _buildInfoItem(
-                                icon: Icons.person,
-                                label: 'Customer',
-                                value: customerName,
-                              ),
-                            ),
-                          if (customerPhone != null)
-                            Expanded(
-                              child: _buildInfoItem(
-                                icon: Icons.phone,
-                                label: 'Phone',
-                                value: customerPhone,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ],
-
-                    // Payment Method
-                    if (paymentMethod != null) ...[
-                      SizedBox(height: 12),
-                      _buildInfoItem(
-                        icon: paymentMethod == 'cash'
-                            ? Icons.money
-                            : Icons.credit_card,
-                        label: 'Payment',
-                        value: paymentMethod.toUpperCase(),
-                      ),
-                    ],
-                  ],
                 ),
-              ),
-            ),
-
-            // Items Section
-            Expanded(
-              child: Container(
-                margin: EdgeInsets.symmetric(horizontal: 16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black12,
-                      blurRadius: 8,
-                      offset: Offset(0, 4),
+                // RIGHT SIDE: Order Info & Actions (40%)
+                Expanded(
+                  flex: 4,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.grey[50], // Light background for side panel
+                      border: Border(left: BorderSide(color: Colors.grey[200]!)),
                     ),
-                  ],
-                ),
-                child: Column(
-                  children: [
-                    // Items Header
-                    Container(
-                      padding: EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: primaryColor.withOpacity(0.05),
-                        borderRadius: BorderRadius.only(
-                          topLeft: Radius.circular(16),
-                          topRight: Radius.circular(16),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.restaurant_menu, color: primaryColor),
-                          SizedBox(width: 8),
-                          Text(
-                            'Order Items (${items.length})',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: primaryColor,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    // Items List
-                    Expanded(
-                      child: ListView.builder(
-                        padding: EdgeInsets.all(16),
-                        itemCount: items.length,
-                        itemBuilder: (context, index) {
-                          final item = items[index];
-                          final name =
-                              item['name']?.toString() ?? 'Unknown Item';
-                          final quantity =
-                              (item['quantity'] as num?)?.toInt() ?? 1;
-                          final price =
-                              (item['price'] as num?)?.toDouble() ?? 0.0;
-                          final total = price * quantity;
-                          final specialInstructions =
-                              item['specialInstructions']?.toString();
-
-                          return Container(
-                            margin: EdgeInsets.only(bottom: 12),
-                            padding: EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Colors.grey[50],
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.grey[200]!),
-                            ),
-                            child: Row(
-                              children: [
-                                // Quantity Badge
-                                Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: BoxDecoration(
-                                    color: primaryColor.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      '$quantity',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: primaryColor,
-                                        fontSize: 16,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                SizedBox(width: 16),
-
-                                // Item Details
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        name,
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                      SizedBox(height: 4),
-                                      Text(
-                                        'QAR ${price.toStringAsFixed(2)} each',
-                                        style: TextStyle(
-                                          color: Colors.grey[600],
-                                          fontSize: 14,
-                                        ),
-                                      ),
-                                      if (specialInstructions != null &&
-                                          specialInstructions.isNotEmpty) ...[
-                                        SizedBox(height: 4),
-                                        Text(
-                                          'Special: $specialInstructions',
-                                          style: TextStyle(
-                                            color: Colors.orange[700],
-                                            fontSize: 12,
-                                            fontStyle: FontStyle.italic,
-                                          ),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-
-                                // Total Price
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    Text(
-                                      'QAR ${total.toStringAsFixed(2)}',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 16,
-                                        color: primaryColor,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-
-                    // Total Section
-                    Container(
-                      padding: EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: primaryColor.withOpacity(0.05),
-                        borderRadius: BorderRadius.only(
-                          bottomLeft: Radius.circular(16),
-                          bottomRight: Radius.circular(16),
-                        ),
-                      ),
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.all(24),
                       child: Column(
                         children: [
-                          if (subtotal != totalAmount)
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  'Subtotal:',
-                                  style: TextStyle(fontSize: 16),
-                                ),
-                                Text(
-                                  'QAR ${subtotal.toStringAsFixed(2)}',
-                                  style: TextStyle(fontSize: 16),
-                                ),
-                              ],
-                            ),
-                          if (subtotal != totalAmount) SizedBox(height: 8),
-
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                'TOTAL:',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: primaryColor,
-                                ),
-                              ),
-                              Text(
-                                'QAR ${totalAmount.toStringAsFixed(2)}',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: primaryColor,
-                                ),
-                              ),
-                            ],
+                          _buildOrderHeader(
+                            dailyOrderNumber,
+                            orderType,
+                            status,
+                            paymentStatus,
+                            tableNumber,
+                            timestamp,
+                            customerName,
+                            carPlateNumber,
+                            customerPhone,
+                            paymentMethod,
                           ),
+                          SizedBox(height: 24),
+                          // Actions directly in side panel
+                          _buildActionButtons(status, paymentStatus, orderType) ??
+                              SizedBox(),
                         ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          }
+
+          // MOBILE LAYOUT (Vertical)
+          return Column(
+            children: [
+              _buildOrderHeader(
+                dailyOrderNumber,
+                orderType,
+                status,
+                paymentStatus,
+                tableNumber,
+                timestamp,
+                customerName,
+                carPlateNumber,
+                customerPhone,
+                paymentMethod,
+              ),
+              Expanded(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                  child: _buildItemsList(items, primaryColor, subtotal, totalAmount),
+                ),
+              ),
+              SizedBox(height: 16),
+            ],
+          );
+        },
+      ),
+      // Only show bottom bar on mobile
+      bottomNavigationBar: LayoutBuilder(
+        builder: (context, constraints) {
+          return constraints.maxWidth < 900
+              ? (_buildActionButtons(status, paymentStatus, orderType) ?? SizedBox())
+              : SizedBox();
+        },
+      ),
+    );
+  }
+
+  // Helper widget extraction for cleanliness
+  Widget _buildOrderHeader(
+    String dailyOrderNumber,
+    String orderType,
+    String status,
+    String paymentStatus,
+    String? tableNumber,
+    Timestamp? timestamp,
+    String? customerName,
+    String? carPlateNumber,
+    String? customerPhone,
+    String? paymentMethod,
+  ) {
+    return Container(
+      margin: EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 8,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Order Number and Status
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Order #$dailyOrderNumber',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: primaryColor,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: orderType == 'takeaway'
+                            ? Colors.orange[100]
+                            : Colors.blue[100],
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        orderType.toUpperCase().replaceAll('_', ' '),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: orderType == 'takeaway'
+                              ? Colors.orange[800]
+                              : Colors.blue[800],
+                        ),
                       ),
                     ),
                   ],
                 ),
-              ),
+                Column(
+                  children: [
+                    // Order Status Badge
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _getStatusColor(status).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: _getStatusColor(status),
+                          width: 2,
+                        ),
+                      ),
+                      child: Text(
+                        status.toUpperCase(),
+                        style: TextStyle(
+                          color: _getStatusColor(status),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                    // Payment Status Badge
+                    if (status == 'served') ...[
+                      SizedBox(height: 8),
+                      Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: (paymentStatus == 'paid'
+                                  ? Colors.green
+                                  : Colors.red)
+                              .withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: paymentStatus == 'paid'
+                                ? Colors.green
+                                : Colors.red,
+                            width: 2,
+                          ),
+                        ),
+                        child: Text(
+                          paymentStatus.toUpperCase(),
+                          style: TextStyle(
+                            color: paymentStatus == 'paid'
+                                ? Colors.green
+                                : Colors.red,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
             ),
+
             SizedBox(height: 16),
+            Divider(color: Colors.grey[300]),
+            SizedBox(height: 16),
+
+            // Order Info Grid
+            Row(
+              children: [
+                Expanded(
+                  child: _buildInfoItem(
+                    icon: orderType == 'takeaway'
+                        ? Icons.shopping_bag
+                        : Icons.table_restaurant,
+                    label: orderType == 'takeaway' ? 'Pickup' : 'Table',
+                    value: orderType == 'takeaway'
+                        ? 'Counter'
+                        : (tableNumber ?? 'N/A'),
+                  ),
+                ),
+                Expanded(
+                  child: _buildInfoItem(
+                    icon: Icons.access_time,
+                    label: 'Ordered',
+                    value: timestamp != null
+                        ? _formatTime(timestamp.toDate())
+                        : 'Unknown',
+                  ),
+                ),
+              ],
+            ),
+
+            // Customer Info (for takeaway)
+            if (orderType == 'takeaway' &&
+                (customerName != null ||
+                    customerPhone != null ||
+                    carPlateNumber != null)) ...[
+              SizedBox(height: 12),
+              Row(
+                children: [
+                  if (carPlateNumber != null)
+                    Expanded(
+                      child: _buildInfoItem(
+                        icon: Icons.directions_car,
+                        label: 'Car Plate',
+                        value: carPlateNumber,
+                      ),
+                    ),
+                  if (customerName != null)
+                    Expanded(
+                      child: _buildInfoItem(
+                        icon: Icons.person,
+                        label: 'Customer',
+                        value: customerName,
+                      ),
+                    ),
+                  if (customerPhone != null)
+                    Expanded(
+                      child: _buildInfoItem(
+                        icon: Icons.phone,
+                        label: 'Phone',
+                        value: customerPhone,
+                      ),
+                    ),
+                ],
+              ),
+            ],
+
+            // Payment Method
+            if (paymentMethod != null) ...[
+              SizedBox(height: 12),
+              _buildInfoItem(
+                icon: paymentMethod == 'cash'
+                    ? Icons.money
+                    : Icons.credit_card,
+                label: 'Payment',
+                value: paymentMethod.toUpperCase(),
+              ),
+            ],
           ],
         ),
       ),
-      // Action Buttons
-      bottomNavigationBar: _buildActionButtons(
-        status,
-        paymentStatus,
-        orderType,
+    );
+  }
+
+  Widget _buildItemsList(
+    List<Map<String, dynamic>> items,
+    Color primaryColor,
+    double subtotal,
+    double totalAmount,
+  ) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 8,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Items Header
+          Container(
+            padding: EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: primaryColor.withOpacity(0.05),
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(16),
+                topRight: Radius.circular(16),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.restaurant_menu, color: primaryColor),
+                SizedBox(width: 8),
+                Text(
+                  'Order Items (${items.length})',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: primaryColor,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Items List
+          ListView.builder(
+            shrinkWrap: true,
+            physics: NeverScrollableScrollPhysics(), // Scroll handled by parent
+            padding: EdgeInsets.all(16),
+            itemCount: items.length,
+            itemBuilder: (context, index) {
+              final item = items[index];
+              final name = item['name']?.toString() ?? 'Unknown Item';
+              final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
+              final price = (item['price'] as num?)?.toDouble() ?? 0.0;
+              final total = price * quantity;
+              final specialInstructions =
+                  item['specialInstructions']?.toString();
+
+              return Container(
+                margin: EdgeInsets.only(bottom: 12),
+                padding: EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.grey[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey[200]!),
+                ),
+                child: Row(
+                  children: [
+                    // Quantity Badge
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: primaryColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Center(
+                        child: Text(
+                          '$quantity',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: primaryColor,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: 16),
+
+                    // Item Details
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            name,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 16,
+                            ),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'QAR ${price.toStringAsFixed(2)} each',
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 14,
+                            ),
+                          ),
+                          if (specialInstructions != null &&
+                              specialInstructions.isNotEmpty) ...[
+                            SizedBox(height: 4),
+                            Text(
+                              'Special: $specialInstructions',
+                              style: TextStyle(
+                                color: Colors.orange[700],
+                                fontSize: 12,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+
+                    // Total Price
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          'QAR ${total.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: primaryColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+
+          // Total Section
+          Container(
+            padding: EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: primaryColor.withOpacity(0.05),
+              borderRadius: BorderRadius.only(
+                bottomLeft: Radius.circular(16),
+                bottomRight: Radius.circular(16),
+              ),
+            ),
+            child: Column(
+              children: [
+                if (subtotal != totalAmount)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Subtotal:',
+                        style: TextStyle(fontSize: 16),
+                      ),
+                      Text(
+                        'QAR ${subtotal.toStringAsFixed(2)}',
+                        style: TextStyle(fontSize: 16),
+                      ),
+                    ],
+                  ),
+                if (subtotal != totalAmount) SizedBox(height: 8),
+
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'TOTAL:',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: primaryColor,
+                      ),
+                    ),
+                    Text(
+                      'QAR ${totalAmount.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: primaryColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1080,12 +1170,15 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         return;
       }
 
+      final waiterEmail = userProvider.userEmail ?? 'unknown';
+
       await FirestoreService.updateOrderStatusWithTable(
         branchId,
         widget.order.id,
         OrderStatus.served,
         tableNumber: orderType == OrderType.dineIn ? tableNumber : null,
         validateTransition: false, // Allow direct transition for robustness
+        actionBy: waiterEmail,
       );
 
       if (!mounted) return;
@@ -1117,15 +1210,31 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     setState(() => _isUpdating = true);
 
     try {
-      final orderData =
-          (widget.order.data() as Map<String, dynamic>?) ?? <String, dynamic>{};
-      final orderType = orderData['Order_type']?.toString() ?? OrderType.dineIn;
-      final totalAmount = (orderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
-      final tableNumber = orderData['tableNumber']?.toString();
-
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final branchId = userProvider.currentBranch;
-      if (branchId == null) return;
+      if (branchId == null) {
+        _showErrorSnackbar('Branch not found. Please restart the app.');
+        return;
+      }
+
+      // Fetch FRESH order data to avoid stale amount/status
+      final freshOrderData = await FirestoreService.validateOrderExists(widget.order.id);
+      if (freshOrderData == null) {
+        _showErrorSnackbar('Order no longer exists.');
+        return;
+      }
+
+      // Check if already paid
+      final currentPaymentStatus = freshOrderData['paymentStatus'] as String? ?? '';
+      if (currentPaymentStatus == 'paid') {
+        _showErrorSnackbar('Order has already been paid.');
+        return;
+      }
+
+      final orderType = freshOrderData['Order_type']?.toString() ?? OrderType.dineIn;
+      final totalAmount = (freshOrderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
+      final tableNumber = freshOrderData['tableNumber']?.toString();
+      final waiterEmail = userProvider.userEmail ?? 'unknown';
 
       await FirestoreService.processPayment(
         branchId: branchId,
@@ -1133,18 +1242,40 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         paymentMethod: paymentMethod,
         amount: totalAmount,
         tableNumber: orderType == OrderType.dineIn ? tableNumber : null,
+        expectedAmount: totalAmount, // Validate amount hasn't changed
       );
 
+      // Record paidBy metadata
+      await FirebaseFirestore.instance
+          .collection('Orders')
+          .doc(widget.order.id)
+          .update({
+        'paidBy': waiterEmail,
+        'paidAt': FieldValue.serverTimestamp(),
+      });
+
+      if (!mounted) return;
       _showSuccessSnackbar(
         'Payment processed successfully with ${paymentMethod.toUpperCase()}!',
       );
       Navigator.pop(context);
+    } on OrderNotFoundException catch (_) {
+      if (!mounted) return;
+      _showErrorSnackbar('Order no longer exists.');
+    } on OrderModifiedException catch (_) {
+      if (!mounted) return;
+      _showErrorSnackbar('Order amount has changed. Please review and try again.');
+    } on InvalidStatusTransitionException catch (_) {
+      if (!mounted) return;
+      _showErrorSnackbar('Order has already been paid.');
     } on FirebaseException catch (e) {
+      if (!mounted) return;
       _showErrorSnackbar('Payment failed: ${e.message}');
     } catch (e) {
+      if (!mounted) return;
       _showErrorSnackbar('Payment failed: ${e.toString()}');
     } finally {
-      setState(() => _isUpdating = false);
+      if (mounted) setState(() => _isUpdating = false);
     }
   }
 
@@ -1230,50 +1361,44 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     setState(() => _isUpdating = true);
 
     try {
-      final updateData = <String, dynamic>{
-        'status': 'cancelled',
-        'cancelledAt': FieldValue.serverTimestamp(),
-      };
-      
-      // Add cancellation reason if provided
-      final reason = reasonController.text.trim();
-      if (reason.isNotEmpty) {
-        updateData['cancellationReason'] = reason;
-      }
-
-      await FirebaseFirestore.instance
-          .collection('Orders')
-          .doc(widget.order.id)
-          .update(updateData);
-
-      // Clear table if it's a dine-in order
       final orderData =
           (widget.order.data() as Map<String, dynamic>?) ?? <String, dynamic>{};
       final orderType = orderData['Order_type']?.toString() ?? 'dine_in';
+      final tableNumber = orderData['tableNumber']?.toString();
 
-      if (orderType == 'dine_in') {
-        final tableNumber = orderData['tableNumber']?.toString();
-        if (tableNumber != null) {
-          final tableUpdate = <String, dynamic>{};
-          tableUpdate['Tables.$tableNumber.status'] = 'available';
-          tableUpdate['Tables.$tableNumber.currentOrderId'] =
-              FieldValue.delete();
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final branchId = userProvider.currentBranch;
 
-          final userProvider = Provider.of<UserProvider>(
-            context,
-            listen: false,
-          );
-          final branchId = userProvider.currentBranch;
-
-          if (branchId != null) {
-            await FirebaseFirestore.instance
-                .collection('Branch')
-                .doc(branchId)
-                .update(tableUpdate);
-          }
-        }
+      if (branchId == null) {
+        _showErrorSnackbar('Branch not found.');
+        return;
       }
 
+      // Add cancellation reason if provided
+      final reason = reasonController.text.trim();
+
+      // Use transactional update for order + table status atomicity
+      await FirestoreService.updateOrderStatusWithTable(
+        branchId,
+        widget.order.id,
+        'cancelled',
+        tableNumber: orderType == OrderType.dineIn ? tableNumber : null,
+        validateTransition: false,
+      );
+
+      // Update cancellation metadata separately (reason + timestamp)
+      final metaUpdate = <String, dynamic>{
+        'cancelledAt': FieldValue.serverTimestamp(),
+      };
+      if (reason.isNotEmpty) {
+        metaUpdate['cancellationReason'] = reason;
+      }
+      await FirebaseFirestore.instance
+          .collection('Orders')
+          .doc(widget.order.id)
+          .update(metaUpdate);
+
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Order cancelled successfully!'),
@@ -1284,6 +1409,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
       Navigator.pop(context);
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error cancelling order: $e'),
@@ -1292,7 +1418,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         ),
       );
     } finally {
-      setState(() => _isUpdating = false);
+      if (mounted) setState(() => _isUpdating = false);
     }
   }
 
@@ -1300,11 +1426,22 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     setState(() => _isUpdating = true);
 
     try {
-      await FirebaseFirestore.instance
-          .collection('Orders')
-          .doc(widget.order.id)
-          .update({'status': 'pending'});
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final branchId = userProvider.currentBranch;
 
+      if (branchId == null) {
+        _showErrorSnackbar('Branch not found.');
+        return;
+      }
+
+      await FirestoreService.updateOrderStatusWithTable(
+        branchId,
+        widget.order.id,
+        'pending',
+        validateTransition: false,
+      );
+
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Order returned to pending!'),
@@ -1315,6 +1452,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
       Navigator.pop(context);
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error updating order: $e'),
@@ -1323,7 +1461,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         ),
       );
     } finally {
-      setState(() => _isUpdating = false);
+      if (mounted) setState(() => _isUpdating = false);
     }
   }
 
@@ -1331,11 +1469,22 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     setState(() => _isUpdating = true);
 
     try {
-      await FirebaseFirestore.instance
-          .collection('Orders')
-          .doc(widget.order.id)
-          .update({'status': 'preparing'});
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final branchId = userProvider.currentBranch;
 
+      if (branchId == null) {
+        _showErrorSnackbar('Branch not found.');
+        return;
+      }
+
+      await FirestoreService.updateOrderStatusWithTable(
+        branchId,
+        widget.order.id,
+        'preparing',
+        validateTransition: false,
+      );
+
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Order returned to preparing!'),
@@ -1346,6 +1495,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
       Navigator.pop(context);
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error updating order: $e'),
@@ -1354,7 +1504,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         ),
       );
     } finally {
-      setState(() => _isUpdating = false);
+      if (mounted) setState(() => _isUpdating = false);
     }
   }
 
@@ -1362,11 +1512,22 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     setState(() => _isUpdating = true);
 
     try {
-      await FirebaseFirestore.instance
-          .collection('Orders')
-          .doc(widget.order.id)
-          .update({'status': 'prepared'});
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final branchId = userProvider.currentBranch;
 
+      if (branchId == null) {
+        _showErrorSnackbar('Branch not found.');
+        return;
+      }
+
+      await FirestoreService.updateOrderStatusWithTable(
+        branchId,
+        widget.order.id,
+        'prepared',
+        validateTransition: false,
+      );
+
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Order returned to prepared!'),
@@ -1377,6 +1538,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
       Navigator.pop(context);
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error updating order: $e'),
@@ -1385,7 +1547,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         ),
       );
     } finally {
-      setState(() => _isUpdating = false);
+      if (mounted) setState(() => _isUpdating = false);
     }
   }
 

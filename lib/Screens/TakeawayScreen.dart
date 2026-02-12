@@ -2032,6 +2032,9 @@ class _TakeawayOrderScreenState extends State<TakeawayOrderScreen> {
         transaction.set(orderRef, orderData);
       });
 
+      // Check mounted before UI operations after async transaction
+      if (!mounted) return;
+
       // Show success dialog and clear form
       _showSuccessDialog();
       _clearFormData();

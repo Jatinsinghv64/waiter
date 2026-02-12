@@ -71,6 +71,37 @@ class AppConfig {
 
   /// Maximum items to show before "see more"
   static const int maxPreviewItems = 2;
+  
+  /// Base URL for customer self-ordering (set this to your deployed web app URL)
+  /// Example: 'https://your-restaurant.web.app' or 'https://order.yourrestaurant.com'
+  /// Set to null or empty string to generate relative URLs
+  static const String? customerOrderBaseUrl = 'https://mddprod-2954f.web.app';
+  
+  /// Builds the customer ordering URL for a QR session
+  /// Returns a fully qualified URI with session parameter
+  static Uri buildCustomerOrderUri(String sessionId) {
+    final baseUrl = customerOrderBaseUrl;
+    
+    if (baseUrl != null && baseUrl.isNotEmpty) {
+      // Use configured base URL for shareable links
+      return Uri.parse(baseUrl).replace(
+        path: '/order',
+        queryParameters: {'session': sessionId},
+      );
+    }
+    
+    // Fallback to relative URL (for local/dev use)
+    return Uri(
+      path: '/order',
+      queryParameters: {'session': sessionId},
+    );
+  }
+  
+  /// Validates if a customer order URI has the required structure
+  static bool isValidCustomerOrderUri(Uri uri) {
+    final sessionId = uri.queryParameters['session'];
+    return sessionId != null && sessionId.isNotEmpty;
+  }
 }
 
 /// App theme colors

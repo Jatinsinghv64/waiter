@@ -1,6 +1,7 @@
 // firestore_service.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../constants.dart';
+import '../utils.dart';
 
 /// Custom exception types for better error handling
 class OrderNotFoundException implements Exception {
@@ -33,8 +34,26 @@ class TableOrderMismatchException implements Exception {
   String toString() => 'Table $tableNumber order mismatch. Expected: $expectedOrderId';
 }
 
+/// Exception for invalid order data (empty cart, invalid quantities, etc.)
+class InvalidOrderException implements Exception {
+  final String message;
+  InvalidOrderException(this.message);
+  @override
+  String toString() => 'Invalid order: $message';
+}
+
+/// Exception thrown when a waiter tries to claim an order already handled by another waiter
+class OrderAlreadyClaimedException implements Exception {
+  final String orderId;
+  final String claimedBy;
+  OrderAlreadyClaimedException(this.orderId, this.claimedBy);
+  @override
+  String toString() => 'Order $orderId already handled by $claimedBy';
+}
+
 class FirestoreService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  static const Duration _defaultQrSessionTtl = Duration(hours: 2);
 
   // ============================================
   // VALIDATION HELPERS
@@ -236,6 +255,102 @@ class FirestoreService {
   }
 
   // ============================================
+  // QR SESSION OPERATIONS
+  // ============================================
+
+  /// Creates or reuses an active QR session for a table.
+  /// Ensures only one active session per table and extends expiry on reuse.
+  static Future<Map<String, dynamic>> createOrReuseQrSession({
+    required String branchId,
+    required String tableNumber,
+    Duration? ttl,
+  }) async {
+    final sessionTtl = ttl ?? _defaultQrSessionTtl;
+    final now = DateTime.now();
+    final expiresAt = Timestamp.fromDate(now.add(sessionTtl));
+
+    final branchRef = _firestore.collection('Branch').doc(branchId);
+    final branchDoc = await branchRef.get();
+
+    if (!branchDoc.exists) {
+      throw OrderNotFoundException('Branch not found: $branchId');
+    }
+
+    final branchData = branchDoc.data() as Map<String, dynamic>;
+    final tables = branchData['Tables'] as Map<String, dynamic>? ?? {};
+    final tableData = tables[tableNumber] as Map<String, dynamic>?;
+
+    if (tableData == null) {
+      throw TableOrderMismatchException(tableNumber, null);
+    }
+
+    // Check for existing active session
+    final existingSessionSnapshot = await _firestore
+        .collection('qr_sessions')
+        .where('branchId', isEqualTo: branchId)
+        .where('tableNumber', isEqualTo: tableNumber)
+        .where('isActive', isEqualTo: true)
+        .where('isBillLocked', isEqualTo: false)
+        .limit(1)
+        .get();
+
+    if (existingSessionSnapshot.docs.isNotEmpty) {
+      final sessionDoc = existingSessionSnapshot.docs.first;
+      final sessionData = sessionDoc.data();
+      final sessionExpiry = (sessionData['expiresAt'] as Timestamp?)?.toDate();
+      final isExpired = sessionExpiry != null && now.isAfter(sessionExpiry);
+
+      if (!isExpired) {
+        // Extend existing session
+        await sessionDoc.reference.update({
+          'expiresAt': expiresAt,
+          'lastActivity': FieldValue.serverTimestamp(),
+        });
+        return {
+          'id': sessionDoc.id,
+          ...sessionData,
+          'expiresAt': expiresAt,
+        };
+      }
+
+      // Mark expired session as inactive
+      await sessionDoc.reference.update({
+        'isActive': false,
+        'expiredAt': FieldValue.serverTimestamp(),
+      });
+    }
+
+    // Create new session
+    final newSessionRef = _firestore.collection('qr_sessions').doc();
+    final sessionData = <String, dynamic>{
+      'branchId': branchId,
+      'tableNumber': tableNumber,
+      'isActive': true,
+      'isBillLocked': false,
+      'createdAt': FieldValue.serverTimestamp(),
+      'lastActivity': FieldValue.serverTimestamp(),
+      'expiresAt': expiresAt,
+      'orderIds': <String>[],
+      'totalOrderCount': 0,
+    };
+
+    await newSessionRef.set(sessionData);
+
+    return {
+      'id': newSessionRef.id,
+      ...sessionData,
+      'expiresAt': expiresAt,
+    };
+  }
+
+  /// Updates session activity timestamp (keep-alive).
+  static Future<void> touchQrSession(String sessionId) async {
+    await _firestore.collection('qr_sessions').doc(sessionId).update({
+      'lastActivity': FieldValue.serverTimestamp(),
+    });
+  }
+
+  // ============================================
   // ORDER OPERATIONS WITH TRANSACTIONS
   // ============================================
 
@@ -375,6 +490,7 @@ class FirestoreService {
     String status, {
     String? tableNumber,
     bool validateTransition = true,
+    String? actionBy,
   }) async {
     await _firestore.runTransaction((transaction) async {
       final orderRef = _firestore.collection('Orders').doc(orderId);
@@ -394,11 +510,24 @@ class FirestoreService {
 
       final currentVersion = (orderData['version'] as num?)?.toInt() ?? 1;
 
-      transaction.update(orderRef, {
+      final updateData = <String, dynamic>{
         'status': status,
         'timestamp': FieldValue.serverTimestamp(),
         'version': currentVersion + 1,
-      });
+      };
+
+      // Record who performed the action
+      if (actionBy != null && actionBy.isNotEmpty) {
+        if (status == OrderStatus.served) {
+          updateData['servedBy'] = actionBy;
+          updateData['servedAt'] = FieldValue.serverTimestamp();
+        } else if (status == OrderStatus.paid) {
+          updateData['paidBy'] = actionBy;
+          updateData['paidAt'] = FieldValue.serverTimestamp();
+        }
+      }
+
+      transaction.update(orderRef, updateData);
 
       // Update table status if provided
       if (tableNumber != null) {
@@ -419,6 +548,116 @@ class FirestoreService {
         }
 
         transaction.update(branchRef, tableUpdate);
+      }
+    });
+  }
+
+  /// Claims and serves an order atomically.
+  /// Only the first waiter to call this succeeds; others get [OrderAlreadyClaimedException].
+  static Future<void> claimAndServeOrder({
+    required String branchId,
+    required String orderId,
+    required String waiterEmail,
+    String? tableNumber,
+    String? orderType,
+  }) async {
+    await _firestore.runTransaction((transaction) async {
+      final orderRef = _firestore.collection('Orders').doc(orderId);
+      final orderDoc = await transaction.get(orderRef);
+
+      if (!orderDoc.exists) {
+        throw OrderNotFoundException(orderId);
+      }
+
+      final orderData = orderDoc.data() as Map<String, dynamic>;
+      final currentStatus = orderData['status'] as String? ?? '';
+
+      // Race condition guard: if no longer 'prepared', another waiter already handled it
+      if (currentStatus != OrderStatus.prepared) {
+        final claimedBy = orderData['servedBy'] as String? ??
+            orderData['paidBy'] as String? ??
+            'another waiter';
+        throw OrderAlreadyClaimedException(orderId, claimedBy);
+      }
+
+      final currentVersion = (orderData['version'] as num?)?.toInt() ?? 1;
+
+      transaction.update(orderRef, {
+        'status': OrderStatus.served,
+        'servedBy': waiterEmail,
+        'servedAt': FieldValue.serverTimestamp(),
+        'timestamp': FieldValue.serverTimestamp(),
+        'version': currentVersion + 1,
+      });
+
+      // Update table status for dine-in orders
+      final effectiveTableNumber = tableNumber ?? orderData['tableNumber']?.toString();
+      final effectiveOrderType = orderType ?? orderData['Order_type']?.toString() ?? OrderType.dineIn;
+
+      if (effectiveOrderType == OrderType.dineIn && effectiveTableNumber != null) {
+        final branchRef = _firestore.collection('Branch').doc(branchId);
+        transaction.update(branchRef, {
+          'Tables.$effectiveTableNumber.status': 'occupied',
+          'Tables.$effectiveTableNumber.statusTimestamp': FieldValue.serverTimestamp(),
+        });
+      }
+    });
+  }
+
+  /// Claims and marks an order as paid atomically.
+  /// Only the first waiter to call this succeeds; others get [OrderAlreadyClaimedException].
+  static Future<void> claimAndPayOrder({
+    required String branchId,
+    required String orderId,
+    required String waiterEmail,
+    required String paymentMethod,
+    required double amount,
+    String? tableNumber,
+    String? orderType,
+  }) async {
+    await _firestore.runTransaction((transaction) async {
+      final orderRef = _firestore.collection('Orders').doc(orderId);
+      final orderDoc = await transaction.get(orderRef);
+
+      if (!orderDoc.exists) {
+        throw OrderNotFoundException(orderId);
+      }
+
+      final orderData = orderDoc.data() as Map<String, dynamic>;
+      final currentStatus = orderData['status'] as String? ?? '';
+      final currentPaymentStatus = orderData['paymentStatus'] as String? ?? '';
+
+      // Guard: order must still be in a payable state
+      if (currentPaymentStatus == 'paid' || currentStatus == OrderStatus.paid) {
+        final claimedBy = orderData['paidBy'] as String? ?? 'another waiter';
+        throw OrderAlreadyClaimedException(orderId, claimedBy);
+      }
+
+      final currentVersion = (orderData['version'] as num?)?.toInt() ?? 1;
+
+      transaction.update(orderRef, {
+        'paymentStatus': 'paid',
+        'paymentMethod': paymentMethod,
+        'paymentTime': FieldValue.serverTimestamp(),
+        'paidAmount': amount,
+        'paidBy': waiterEmail,
+        'paidAt': FieldValue.serverTimestamp(),
+        'status': OrderStatus.paid,
+        'timestamp': FieldValue.serverTimestamp(),
+        'version': currentVersion + 1,
+      });
+
+      // Clear table for dine-in orders
+      final effectiveTableNumber = tableNumber ?? orderData['tableNumber']?.toString();
+      final effectiveOrderType = orderType ?? orderData['Order_type']?.toString() ?? OrderType.dineIn;
+
+      if (effectiveOrderType == OrderType.dineIn && effectiveTableNumber != null) {
+        final branchRef = _firestore.collection('Branch').doc(branchId);
+        transaction.update(branchRef, {
+          'Tables.$effectiveTableNumber.status': 'available',
+          'Tables.$effectiveTableNumber.currentOrderId': FieldValue.delete(),
+          'Tables.$effectiveTableNumber.statusTimestamp': FieldValue.delete(),
+        });
       }
     });
   }
@@ -593,6 +832,35 @@ class FirestoreService {
     String? customerName,
     String? customerPhone,
   }) async {
+    // Validate cart before starting transaction
+    if (items.isEmpty) {
+      throw InvalidOrderException('Cart is empty');
+    }
+
+    if (items.length > ValidationLimits.maxItemsPerOrder) {
+      throw InvalidOrderException('Too many items in order (max: ${ValidationLimits.maxItemsPerOrder})');
+    }
+
+    // Validate each item and calculate expected total
+    double calculatedTotal = 0.0;
+    for (final item in items) {
+      final quantity = (item['quantity'] as num?)?.toInt() ?? 0;
+      if (quantity <= 0 || quantity > ValidationLimits.maxQuantityPerItem) {
+        throw InvalidOrderException('Invalid quantity for ${item['name'] ?? 'item'} (1-${ValidationLimits.maxQuantityPerItem})');
+      }
+
+      final price = (item['price'] as num?)?.toDouble();
+      if (price == null || price < 0) {
+        throw InvalidOrderException('Invalid price for ${item['name'] ?? 'item'}');
+      }
+
+      calculatedTotal += price * quantity;
+    }
+
+    if (calculatedTotal <= 0) {
+      throw InvalidOrderException('Total must be greater than zero');
+    }
+
     return await _firestore.runTransaction((transaction) async {
       // Validate QR session
       final sessionRef = _firestore.collection('qr_sessions').doc(sessionId);
@@ -753,15 +1021,29 @@ class FirestoreService {
       }
       
       final sessionData = sessionDoc.data() as Map<String, dynamic>;
+      
+      // Check if session is already paid
+      final isActive = sessionData['isActive'] as bool? ?? true;
+      final isBillLocked = sessionData['isBillLocked'] as bool? ?? false;
+      if (!isActive && isBillLocked) {
+        throw InvalidStatusTransitionException('paid', 'paid');
+      }
+      
       final orderIds = List<String>.from(sessionData['orderIds'] ?? []);
       final sessionTableNumber = sessionData['tableNumber'] as String;
       
-      // Mark all orders as paid
+      // Mark all unpaid orders as paid (skip already-paid to prevent double-pay)
       for (final orderId in orderIds) {
         final orderRef = _firestore.collection('Orders').doc(orderId);
         final orderDoc = await transaction.get(orderRef);
         
         if (orderDoc.exists) {
+          final orderData = orderDoc.data() as Map<String, dynamic>;
+          final paymentStatus = orderData['paymentStatus'] as String? ?? '';
+          
+          // Skip already-paid orders
+          if (paymentStatus == 'paid') continue;
+          
           transaction.update(orderRef, {
             'paymentStatus': 'paid',
             'paymentMethod': paymentMethod,

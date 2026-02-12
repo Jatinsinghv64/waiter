@@ -7,7 +7,7 @@ import 'package:flutter/services.dart';
 
 import '../Firebase/FirestoreService.dart';
 import 'OrderDetailScreen.dart';
-import 'TableQRCodeScreen.dart';
+// import 'TableQRCodeScreen.dart'; // Removed
 import 'ProfileScreen.dart';
 import 'package:provider/provider.dart';
 import '../Providers/UserProvider.dart';
@@ -975,24 +975,8 @@ class _TablesScreenState extends State<TablesScreen>
               ),
               SizedBox(height: 24),
               // Options
-              _buildOptionTile(
-                icon: Icons.qr_code_2,
-                iconColor: AppColors.primary,
-                title: 'View QR Code',
-                subtitle: 'Scan to place orders',
-                onTap: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => TableQRCodeScreen(
-                        tableNumber: tableNumber,
-                        tableData: Map<String, dynamic>.from(tableData),
-                      ),
-                    ),
-                  );
-                },
-              ),
+              // QR Code option removed
+
               _buildOptionTile(
                 icon: Icons.restaurant_menu,
                 iconColor: Colors.orange[600]!,
@@ -1551,7 +1535,10 @@ class _OrderScreenState extends State<OrderScreen> {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final branchId = userProvider.currentBranch;
 
-      if (branchId == null) return;
+      if (branchId == null) {
+        _showErrorSnackbar('Branch not found. Please restart the app.');
+        return;
+      }
 
       if (_tableStatus == 'available') {
         await FirestoreService.updateTableStatus(
@@ -1581,22 +1568,31 @@ class _OrderScreenState extends State<OrderScreen> {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final branchId = userProvider.currentBranch;
 
-      if (branchId != null) {
-        await FirestoreService.updateTableStatus(
-          branchId,
-          widget.tableNumber,
-          'available',
-        );
+      if (branchId == null) {
+        _showErrorSnackbar('Branch not found.');
+        return;
       }
+
+      await FirestoreService.updateTableStatus(
+        branchId,
+        widget.tableNumber,
+        'available',
+      );
       await FirestoreService.clearCart(widget.tableNumber);
 
+      // Cancel order subscription to prevent memory leak
+      _existingOrderSubscription?.cancel();
+      _existingOrderSubscription = null;
+
       // Reset local state
+      if (!mounted) return;
       setState(() {
         _currentOrderId = null;
         _isAddingToExistingOrder = false;
         _existingOrderItems.clear();
         _currentOrderStatus = '';
         _currentPaymentStatus = 'unpaid';
+        _currentOrderVersion = 1;
       });
 
       _showSuccessSnackbar('Table ${widget.tableNumber} marked as available!');
