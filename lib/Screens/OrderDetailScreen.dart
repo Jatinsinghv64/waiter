@@ -1,1315 +1,791 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../Firebase/FirestoreService.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import '../Firebase/FirestoreService.dart';
 import '../Providers/UserProvider.dart';
 import '../constants.dart';
 
 class OrderDetailScreen extends StatefulWidget {
-  // Accept an untyped DocumentSnapshot so both query docs and single-get docs work.
   final DocumentSnapshot order;
 
-  OrderDetailScreen({Key? key, required this.order}) : super(key: key);
+  const OrderDetailScreen({Key? key, required this.order}) : super(key: key);
 
   @override
   _OrderDetailScreenState createState() => _OrderDetailScreenState();
 }
 
 class _OrderDetailScreenState extends State<OrderDetailScreen> {
-  final Color primaryColor = Color(0xFF1976D2);
-  final Color secondaryColor = Color(0xFFE3F2FD);
+  final Color primaryColor = const Color(0xFF1976D2);
   bool _isUpdating = false;
 
   @override
   Widget build(BuildContext context) {
-    // Safely coerce snapshot data to Map<String, dynamic>. If data is null or not a map, use empty map.
-    final Map<String, dynamic> orderData =
-        (widget.order.data() as Map<String, dynamic>?) ?? <String, dynamic>{};
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('Orders')
+          .doc(widget.order.id)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
 
-    final items = List<Map<String, dynamic>>.from(orderData['items'] ?? []);
-    final status = orderData['status']?.toString() ?? 'unknown';
-    final paymentStatus = orderData['paymentStatus']?.toString() ?? 'unpaid';
-    final orderType = orderData['Order_type']?.toString() ?? 'dine_in';
-    // ... items calculation and other variables ...
-    final tableNumber = orderData['tableNumber']?.toString();
-    final dailyOrderNumber = orderData['dailyOrderNumber']?.toString() ?? '';
-    final totalAmount = (orderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
-    final subtotal = (orderData['subtotal'] as num?)?.toDouble() ?? 0.0;
-    final timestamp = orderData['timestamp'] as Timestamp?;
-    final customerName = orderData['customerName']?.toString();
-    final carPlateNumber = orderData['carPlateNumber']?.toString();
-    final customerPhone = orderData['customerPhone']?.toString();
-    final paymentMethod = orderData['paymentMethod']?.toString();
+        if (!snapshot.data!.exists) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Order Details')),
+            body: const Center(child: Text('Order no longer exists')),
+          );
+        }
 
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: Text(
-          'Order Details',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        backgroundColor: primaryColor,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: Icon(Icons.refresh),
-            onPressed: () => setState(() {}),
-          ),
-        ],
-      ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final isDesktop = constraints.maxWidth >= 900;
+        final orderData = snapshot.data!.data() as Map<String, dynamic>;
 
-          if (isDesktop) {
-            // DESKTOP / TABLET LAYOUT (Split View)
-            return Row(
+        final items = List<Map<String, dynamic>>.from(orderData['items'] ?? []);
+        final status = orderData['status']?.toString() ?? 'unknown';
+        final paymentStatus =
+            orderData['paymentStatus']?.toString() ?? 'unpaid';
+        final orderType = orderData['Order_type']?.toString() ?? 'dine_in';
+        final dailyOrderNumber =
+            orderData['dailyOrderNumber']?.toString() ?? '#';
+        final tableNumber = orderData['tableNumber']?.toString();
+        final totalAmount =
+            (orderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
+        final timestamp = orderData['timestamp'] as Timestamp?;
+        final placedBy = orderData['placedByUserId']?.toString();
+        final carPlateNumber = orderData['carPlateNumber']?.toString();
+        final specialInstructions =
+        orderData['specialInstructions']?.toString();
+        final cancellationReason = orderData['cancellationReason']?.toString();
+
+        return Scaffold(
+          backgroundColor: Colors.grey[50],
+          appBar: AppBar(
+            title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // LEFT SIDE: Items List (60%)
-                Expanded(
-                  flex: 6,
-                  child: Container(
-                    padding: EdgeInsets.all(24),
-                    child: Column(
-                      children: [
-                        _buildItemsList(items, primaryColor, subtotal, totalAmount),
-                      ],
-                    ),
-                  ),
+                Text(
+                  'Order #$dailyOrderNumber',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
-                // RIGHT SIDE: Order Info & Actions (40%)
-                Expanded(
-                  flex: 4,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.grey[50], // Light background for side panel
-                      border: Border(left: BorderSide(color: Colors.grey[200]!)),
-                    ),
-                    child: SingleChildScrollView(
-                      padding: EdgeInsets.all(24),
-                      child: Column(
-                        children: [
-                          _buildOrderHeader(
-                            dailyOrderNumber,
-                            orderType,
-                            status,
-                            paymentStatus,
-                            tableNumber,
-                            timestamp,
-                            customerName,
-                            carPlateNumber,
-                            customerPhone,
-                            paymentMethod,
-                          ),
-                          SizedBox(height: 24),
-                          // Actions directly in side panel
-                          _buildActionButtons(status, paymentStatus, orderType) ??
-                              SizedBox(),
-                        ],
-                      ),
-                    ),
+                Text(
+                  timestamp != null
+                      ? DateFormat('hh:mm a').format(timestamp.toDate())
+                      : 'Just now',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.normal,
                   ),
                 ),
               ],
-            );
-          }
-
-          // MOBILE LAYOUT (Vertical)
-          return Column(
-            children: [
-              _buildOrderHeader(
-                dailyOrderNumber,
-                orderType,
-                status,
-                paymentStatus,
-                tableNumber,
-                timestamp,
-                customerName,
-                carPlateNumber,
-                customerPhone,
-                paymentMethod,
+            ),
+            actions: [
+              // Menu for "Return" and other exceptional actions
+              PopupMenuButton<String>(
+                onSelected: (value) {
+                  if (value == 'return') _handleReturnOrder(snapshot.data!.id);
+                  if (value == 'print') {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Sending to Printer...')),
+                    );
+                  }
+                },
+                itemBuilder: (BuildContext context) {
+                  return [
+                    const PopupMenuItem(
+                      value: 'print',
+                      child: Row(
+                        children: [
+                          Icon(Icons.print, color: Colors.grey),
+                          SizedBox(width: 8),
+                          Text('Print Ticket'),
+                        ],
+                      ),
+                    ),
+                    if (status == 'served' || status == 'paid')
+                      const PopupMenuItem(
+                        value: 'return',
+                        child: Row(
+                          children: [
+                            Icon(Icons.assignment_return, color: Colors.orange),
+                            SizedBox(width: 8),
+                            Text('Return Order'),
+                          ],
+                        ),
+                      ),
+                  ];
+                },
               ),
-              Expanded(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16),
-                  child: _buildItemsList(items, primaryColor, subtotal, totalAmount),
-                ),
-              ),
-              SizedBox(height: 16),
             ],
-          );
-        },
-      ),
-      // Only show bottom bar on mobile
-      bottomNavigationBar: LayoutBuilder(
-        builder: (context, constraints) {
-          return constraints.maxWidth < 900
-              ? (_buildActionButtons(status, paymentStatus, orderType) ?? SizedBox())
-              : SizedBox();
-        },
-      ),
-    );
-  }
-
-  // Helper widget extraction for cleanliness
-  Widget _buildOrderHeader(
-    String dailyOrderNumber,
-    String orderType,
-    String status,
-    String paymentStatus,
-    String? tableNumber,
-    Timestamp? timestamp,
-    String? customerName,
-    String? carPlateNumber,
-    String? customerPhone,
-    String? paymentMethod,
-  ) {
-    return Container(
-      margin: EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black12,
-            blurRadius: 8,
-            offset: Offset(0, 4),
+            backgroundColor: primaryColor,
+            foregroundColor: Colors.white,
+            elevation: 0,
           ),
-        ],
-      ),
-      child: Padding(
-        padding: EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Order Number and Status
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Order #$dailyOrderNumber',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: primaryColor,
-                      ),
-                    ),
-                    SizedBox(height: 4),
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: orderType == 'takeaway'
-                            ? Colors.orange[100]
-                            : Colors.blue[100],
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        orderType.toUpperCase().replaceAll('_', ' '),
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: orderType == 'takeaway'
-                              ? Colors.orange[800]
-                              : Colors.blue[800],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                Column(
-                  children: [
-                    // Order Status Badge
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _getStatusColor(status).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: _getStatusColor(status),
-                          width: 2,
-                        ),
-                      ),
-                      child: Text(
-                        status.toUpperCase(),
-                        style: TextStyle(
-                          color: _getStatusColor(status),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-                    // Payment Status Badge
-                    if (status == 'served') ...[
-                      SizedBox(height: 8),
-                      Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: (paymentStatus == 'paid'
-                                  ? Colors.green
-                                  : Colors.red)
-                              .withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: paymentStatus == 'paid'
-                                ? Colors.green
-                                : Colors.red,
-                            width: 2,
+          body: Column(
+            children: [
+              _buildOrderTimeline(status, paymentStatus),
+
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Status Warning Banner (Cancelled/Returned)
+                      if (status == 'cancelled' || status == 'returned')
+                        Container(
+                          width: double.infinity,
+                          margin: const EdgeInsets.only(bottom: 16),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: status == 'cancelled' ? Colors.red[50] : Colors.orange[50],
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                                color: status == 'cancelled' ? Colors.red : Colors.orange),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                status == 'cancelled' ? "ORDER CANCELLED" : "ORDER RETURNED",
+                                style: TextStyle(
+                                  color: status == 'cancelled' ? Colors.red : Colors.orange,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              if (cancellationReason != null)
+                                Text("Reason: $cancellationReason"),
+                            ],
                           ),
                         ),
-                        child: Text(
-                          paymentStatus.toUpperCase(),
+
+                      _buildLocationCard(
+                        orderType,
+                        tableNumber,
+                        carPlateNumber,
+                        specialInstructions,
+                      ),
+
+                      const SizedBox(height: 16),
+                      _buildItemsList(items),
+                      const SizedBox(height: 16),
+                      _buildFinancials(totalAmount, paymentStatus),
+
+                      const SizedBox(height: 24),
+                      if (placedBy != null)
+                        Text(
+                          'Order placed by: $placedBy',
                           style: TextStyle(
-                            color: paymentStatus == 'paid'
-                                ? Colors.green
-                                : Colors.red,
-                            fontWeight: FontWeight.bold,
+                            color: Colors.grey[500],
                             fontSize: 12,
                           ),
                         ),
-                      ),
                     ],
-                  ],
-                ),
-              ],
-            ),
-
-            SizedBox(height: 16),
-            Divider(color: Colors.grey[300]),
-            SizedBox(height: 16),
-
-            // Order Info Grid
-            Row(
-              children: [
-                Expanded(
-                  child: _buildInfoItem(
-                    icon: orderType == 'takeaway'
-                        ? Icons.shopping_bag
-                        : Icons.table_restaurant,
-                    label: orderType == 'takeaway' ? 'Pickup' : 'Table',
-                    value: orderType == 'takeaway'
-                        ? 'Counter'
-                        : (tableNumber ?? 'N/A'),
                   ),
                 ),
-                Expanded(
-                  child: _buildInfoItem(
-                    icon: Icons.access_time,
-                    label: 'Ordered',
-                    value: timestamp != null
-                        ? _formatTime(timestamp.toDate())
-                        : 'Unknown',
-                  ),
-                ),
-              ],
-            ),
+              ),
 
-            // Customer Info (for takeaway)
-            if (orderType == 'takeaway' &&
-                (customerName != null ||
-                    customerPhone != null ||
-                    carPlateNumber != null)) ...[
-              SizedBox(height: 12),
-              Row(
-                children: [
-                  if (carPlateNumber != null)
-                    Expanded(
-                      child: _buildInfoItem(
-                        icon: Icons.directions_car,
-                        label: 'Car Plate',
-                        value: carPlateNumber,
-                      ),
-                    ),
-                  if (customerName != null)
-                    Expanded(
-                      child: _buildInfoItem(
-                        icon: Icons.person,
-                        label: 'Customer',
-                        value: customerName,
-                      ),
-                    ),
-                  if (customerPhone != null)
-                    Expanded(
-                      child: _buildInfoItem(
-                        icon: Icons.phone,
-                        label: 'Phone',
-                        value: customerPhone,
-                      ),
-                    ),
-                ],
+              _buildBottomActionPanel(
+                context,
+                snapshot.data!.id,
+                status,
+                paymentStatus,
+                orderType,
               ),
             ],
-
-            // Payment Method
-            if (paymentMethod != null) ...[
-              SizedBox(height: 12),
-              _buildInfoItem(
-                icon: paymentMethod == 'cash'
-                    ? Icons.money
-                    : Icons.credit_card,
-                label: 'Payment',
-                value: paymentMethod.toUpperCase(),
-              ),
-            ],
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
-  Widget _buildItemsList(
-    List<Map<String, dynamic>> items,
-    Color primaryColor,
-    double subtotal,
-    double totalAmount,
-  ) {
+  Widget _buildOrderTimeline(String status, String paymentStatus) {
+    final steps = ['pending', 'preparing', 'prepared', 'served', 'paid'];
+    int currentStep = steps.indexOf(status);
+    if (status == 'served' && paymentStatus == 'paid') currentStep = 4;
+    if (status == 'paid') currentStep = 4;
+
+    // Treat returned similar to cancelled for timeline visual
+    if (status == 'cancelled' || status == 'returned') return const SizedBox.shrink();
+
     return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black12,
-            blurRadius: 8,
-            offset: Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
+      color: Colors.white,
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          // Items Header
-          Container(
-            padding: EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: primaryColor.withOpacity(0.05),
-              borderRadius: BorderRadius.only(
-                topLeft: Radius.circular(16),
-                topRight: Radius.circular(16),
-              ),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.restaurant_menu, color: primaryColor),
-                SizedBox(width: 8),
-                Text(
-                  'Order Items (${items.length})',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: primaryColor,
-                  ),
-                ),
-              ],
-            ),
+          _buildTimelineStep(Icons.assignment, "New", currentStep >= 0, true),
+          _buildTimelineLine(currentStep >= 1),
+          _buildTimelineStep(
+            Icons.soup_kitchen,
+            "Kitchen",
+            currentStep >= 1,
+            currentStep == 1,
           ),
-
-          // Items List
-          ListView.builder(
-            shrinkWrap: true,
-            physics: NeverScrollableScrollPhysics(), // Scroll handled by parent
-            padding: EdgeInsets.all(16),
-            itemCount: items.length,
-            itemBuilder: (context, index) {
-              final item = items[index];
-              final name = item['name']?.toString() ?? 'Unknown Item';
-              final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
-              final price = (item['price'] as num?)?.toDouble() ?? 0.0;
-              final total = price * quantity;
-              final specialInstructions =
-                  item['specialInstructions']?.toString();
-
-              return Container(
-                margin: EdgeInsets.only(bottom: 12),
-                padding: EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.grey[50],
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey[200]!),
-                ),
-                child: Row(
-                  children: [
-                    // Quantity Badge
-                    Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: primaryColor.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Center(
-                        child: Text(
-                          '$quantity',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: primaryColor,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ),
-                    ),
-                    SizedBox(width: 16),
-
-                    // Item Details
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            name,
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 16,
-                            ),
-                          ),
-                          SizedBox(height: 4),
-                          Text(
-                            'QAR ${price.toStringAsFixed(2)} each',
-                            style: TextStyle(
-                              color: Colors.grey[600],
-                              fontSize: 14,
-                            ),
-                          ),
-                          if (specialInstructions != null &&
-                              specialInstructions.isNotEmpty) ...[
-                            SizedBox(height: 4),
-                            Text(
-                              'Special: $specialInstructions',
-                              style: TextStyle(
-                                color: Colors.orange[700],
-                                fontSize: 12,
-                                fontStyle: FontStyle.italic,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-
-                    // Total Price
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          'QAR ${total.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                            color: primaryColor,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              );
-            },
+          _buildTimelineLine(currentStep >= 2),
+          _buildTimelineStep(
+            Icons.room_service,
+            "Ready",
+            currentStep >= 2,
+            currentStep == 2,
           ),
-
-          // Total Section
-          Container(
-            padding: EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: primaryColor.withOpacity(0.05),
-              borderRadius: BorderRadius.only(
-                bottomLeft: Radius.circular(16),
-                bottomRight: Radius.circular(16),
-              ),
-            ),
-            child: Column(
-              children: [
-                if (subtotal != totalAmount)
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Subtotal:',
-                        style: TextStyle(fontSize: 16),
-                      ),
-                      Text(
-                        'QAR ${subtotal.toStringAsFixed(2)}',
-                        style: TextStyle(fontSize: 16),
-                      ),
-                    ],
-                  ),
-                if (subtotal != totalAmount) SizedBox(height: 8),
-
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'TOTAL:',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: primaryColor,
-                      ),
-                    ),
-                    Text(
-                      'QAR ${totalAmount.toStringAsFixed(2)}',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: primaryColor,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+          _buildTimelineLine(currentStep >= 3),
+          _buildTimelineStep(
+            Icons.dining,
+            "Served",
+            currentStep >= 3,
+            currentStep == 3,
+          ),
+          _buildTimelineLine(currentStep >= 4),
+          _buildTimelineStep(
+            Icons.check_circle,
+            "Paid",
+            currentStep >= 4,
+            currentStep == 4,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildInfoItem({
-    required IconData icon,
-    required String label,
-    required String value,
-  }) {
+  Widget _buildTimelineStep(
+      IconData icon,
+      String label,
+      bool isActive,
+      bool isCurrent,
+      ) {
+    final color = isActive ? primaryColor : Colors.grey[300];
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Icon(icon, size: 16, color: Colors.grey[600]),
-            SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[600],
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
+        CircleAvatar(
+          radius: 14,
+          backgroundColor: color,
+          child: Icon(icon, size: 14, color: Colors.white),
         ),
-        SizedBox(height: 4),
+        const SizedBox(height: 4),
         Text(
-          value,
+          label,
           style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: Colors.black87,
+            fontSize: 10,
+            fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+            color: isActive ? Colors.black87 : Colors.grey,
           ),
         ),
       ],
     );
   }
 
-  Widget? _buildActionButtons(
-    String status,
-    String paymentStatus,
-    String orderType,
-  ) {
+  Widget _buildTimelineLine(bool isActive) {
+    return Expanded(
+      child: Container(
+        height: 2,
+        color: isActive ? primaryColor : Colors.grey[300],
+      ),
+    );
+  }
+
+  Widget _buildLocationCard(
+      String type,
+      String? table,
+      String? carPlate,
+      String? instructions,
+      ) {
+    final isTakeaway = type == 'takeaway';
     return Container(
-      padding: EdgeInsets.all(16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: isTakeaway ? Colors.orange[50] : Colors.blue[50],
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              isTakeaway ? Icons.shopping_bag : Icons.table_restaurant,
+              color: isTakeaway ? Colors.orange : Colors.blue,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isTakeaway ? "Takeaway Order" : "Table $table",
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                if (isTakeaway && carPlate != null)
+                  Text(
+                    "Car: $carPlate",
+                    style: TextStyle(color: Colors.grey[600]),
+                  ),
+                if (instructions != null && instructions.isNotEmpty)
+                  Text(
+                    "Note: $instructions",
+                    style: TextStyle(
+                      color: Colors.red[400],
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildItemsList(List<Map<String, dynamic>> items) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: ListView.separated(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: items.length,
+        separatorBuilder: (c, i) => const Divider(height: 1),
+        itemBuilder: (context, index) {
+          final item = items[index];
+          final hasNote =
+              item['specialInstructions'] != null &&
+                  item['specialInstructions'].toString().isNotEmpty;
+          final variant = item['variantName'] ?? item['selectedVariant'];
+          final price = (item['price'] as num?)?.toDouble() ?? 0.0;
+          final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
+
+          return ListTile(
+            leading: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                "${quantity}x",
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: primaryColor,
+                ),
+              ),
+            ),
+            title: Text(
+              item['name'],
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (variant != null)
+                  Text(
+                    "Variant: $variant",
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  ),
+                if (hasNote)
+                  Text(
+                    "Note: ${item['specialInstructions']}",
+                    style: const TextStyle(fontSize: 12, color: Colors.red),
+                  ),
+              ],
+            ),
+            trailing: Text(
+              AppConfig.formatCurrency((price * quantity)),
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildFinancials(double total, String paymentStatus) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "TOTAL AMOUNT",
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Text(
+                AppConfig.formatCurrency(total),
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          if (paymentStatus == 'paid')
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.green[100],
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Text(
+                "PAID",
+                style: TextStyle(
+                  color: Colors.green,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            )
+          else
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.red[100],
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Text(
+                "UNPAID",
+                style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomActionPanel(
+      BuildContext context,
+      String orderId,
+      String status,
+      String paymentStatus,
+      String orderType,
+      ) {
+    if (status == 'cancelled' || status == 'paid' || status == 'returned') {
+      return const SizedBox.shrink();
+    }
+
+    // Hide panel if serving and paid, though we might want a "Close" button
+    if (status == 'served' && paymentStatus == 'paid') {
+      return const SizedBox.shrink();
+    }
+
+    final String? undoStatus = _getUndoStatus(status);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black12,
-            blurRadius: 8,
-            offset: Offset(0, -2),
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, -5),
           ),
         ],
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Status-specific action buttons
-          if (status == 'pending') ...[
-            // Mark as Preparing button
-            ElevatedButton(
-              onPressed: _isUpdating ? null : _markAsPreparing,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange,
-                foregroundColor: Colors.white,
-                minimumSize: Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+      child: SafeArea(
+        child: Row(
+          children: [
+            // Undo Action (if available)
+            if (undoStatus != null) ...[
+              SizedBox(
+                width: 50,
+                child: IconButton(
+                  onPressed: _isUpdating ? null : () => _handleUndo(orderId, undoStatus, orderType),
+                  icon: const Icon(Icons.undo),
+                  color: Colors.orange,
+                  tooltip: 'Undo Status',
                 ),
               ),
-              child: _isUpdating
-                  ? CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2,
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.restaurant),
-                        SizedBox(width: 8),
-                        Text(
-                          'Mark as Preparing',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
-            SizedBox(height: 12),
-            // Return/Cancel button for pending orders
-            ElevatedButton(
-              onPressed: _isUpdating ? null : _returnOrder,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-                minimumSize: Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: _isUpdating
-                  ? CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2,
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.cancel_outlined),
-                        SizedBox(width: 8),
-                        Text(
-                          'Cancel Order',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
-          ],
-
-          if (status == 'preparing') ...[
-            // Mark as Prepared button
-            ElevatedButton(
-              onPressed: _isUpdating ? null : _markAsPrepared,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-                foregroundColor: Colors.white,
-                minimumSize: Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: _isUpdating
-                  ? CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2,
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.check_circle_outline),
-                        SizedBox(width: 8),
-                        Text(
-                          'Mark as Prepared',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
-            SizedBox(height: 12),
-            // Return to Pending button
-            ElevatedButton(
-              onPressed: _isUpdating ? null : _returnToPending,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.amber[700],
-                foregroundColor: Colors.white,
-                minimumSize: Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: _isUpdating
-                  ? CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2,
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.undo),
-                        SizedBox(width: 8),
-                        Text(
-                          'Return to Pending',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
-            SizedBox(height: 12),
-            // Cancel Order button for preparing
-            ElevatedButton(
-              onPressed: _isUpdating ? null : _returnOrder,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-                minimumSize: Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: _isUpdating
-                  ? CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2,
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.cancel_outlined),
-                        SizedBox(width: 8),
-                        Text(
-                          'Cancel Order',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
-          ],
-
-          if (status == 'prepared') ...[
-            // Mark as Served button
-            ElevatedButton(
-              onPressed: _isUpdating ? null : () => _markAsServed(orderType),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
-                foregroundColor: Colors.white,
-                minimumSize: Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: _isUpdating
-                  ? CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2,
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.room_service),
-                        SizedBox(width: 8),
-                        Text(
-                          orderType == 'takeaway'
-                              ? 'Mark as Picked Up'
-                              : 'Mark as Served',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
-            SizedBox(height: 12),
-            // Return to Preparing button
-            ElevatedButton(
-              onPressed: _isUpdating ? null : _returnToPreparing,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange,
-                foregroundColor: Colors.white,
-                minimumSize: Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: _isUpdating
-                  ? CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2,
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.undo),
-                        SizedBox(width: 8),
-                        Text(
-                          'Return to Preparing',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
-            SizedBox(height: 12),
-            // Cancel Order button for prepared
-            ElevatedButton(
-              onPressed: _isUpdating ? null : _returnOrder,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-                minimumSize: Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: _isUpdating
-                  ? CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2,
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.cancel_outlined),
-                        SizedBox(width: 8),
-                        Text(
-                          'Cancel Order',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
-          ],
-
-          if (status == 'served') ...[
-            if (paymentStatus == 'unpaid') ...[
-              // Mark as Paid button
-              ElevatedButton(
-                onPressed: _isUpdating ? null : _showPaymentOptions,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
-                  foregroundColor: Colors.white,
-                  minimumSize: Size(double.infinity, 50),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                child: _isUpdating
-                    ? CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2,
-                      )
-                    : Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.payment),
-                          SizedBox(width: 8),
-                          Text(
-                            'Mark as Paid',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ],
-                      ),
-              ),
-              SizedBox(height: 12),
+              const SizedBox(width: 8),
             ],
-            // Return to Prepared button
-            ElevatedButton(
-              onPressed: _isUpdating ? null : _returnToPrepared,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green[700],
-                foregroundColor: Colors.white,
-                minimumSize: Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+
+            // Destructive / Back Action
+            if (status != 'paid')
+              Expanded(
+                flex: 1,
+                child: OutlinedButton(
+                  onPressed: () => _handleCancel(orderId),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red,
+                    side: const BorderSide(color: Colors.red),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  child: const Text("Cancel"),
                 ),
               ),
-              child: _isUpdating
-                  ? CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2,
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.undo),
-                        SizedBox(width: 8),
-                        Text(
-                          'Return to Prepared',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
-            SizedBox(height: 12),
-            // Cancel Order button for served
-            ElevatedButton(
-              onPressed: _isUpdating ? null : _returnOrder,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-                minimumSize: Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+
+            const SizedBox(width: 16),
+
+            // Primary Forward Action
+            Expanded(
+              flex: 2,
+              child: ElevatedButton(
+                onPressed:
+                _isUpdating
+                    ? null
+                    : () => _handleMainAction(
+                  context,
+                  orderId,
+                  status,
+                  paymentStatus,
+                  orderType,
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: primaryColor,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child:
+                _isUpdating
+                    ? const SizedBox(
+                  height: 20,
+                  width: 20,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ),
+                )
+                    : Text(
+                  _getMainActionText(status, paymentStatus),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
-              child: _isUpdating
-                  ? CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2,
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.cancel_outlined),
-                        SizedBox(width: 8),
-                        Text(
-                          'Cancel Order',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
             ),
           ],
-
-          if (paymentStatus == 'paid') ...[
-            Container(
-              padding: EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.green.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.green.withOpacity(0.3)),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.check_circle, color: Colors.green),
-                  SizedBox(width: 8),
-                  Text(
-                    'Order has been paid',
-                    style: TextStyle(
-                      color: Colors.green,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-
-          if (status == 'cancelled') ...[
-            Container(
-              padding: EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.red.withOpacity(0.3)),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.cancel, color: Colors.red),
-                  SizedBox(width: 8),
-                  Text(
-                    'Order was cancelled',
-                    style: TextStyle(
-                      color: Colors.red,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }
 
-  Color _getStatusColor(String status) {
-    switch (status.toLowerCase()) {
-      case 'served':
-        return Colors.blue;
-      case 'prepared':
-        return Colors.green;
-      case 'preparing':
-        return Colors.orange;
-      case 'paid':
-        return Colors.teal;
-      case 'pending':
-        return Colors.amber[700]!;
-      case 'cancelled':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
+  // --- Helpers & Logic ---
+
+  String? _getUndoStatus(String currentStatus) {
+    if (currentStatus == 'preparing') return 'pending';
+    if (currentStatus == 'prepared') return 'preparing';
+    if (currentStatus == 'served') return 'prepared';
+    return null;
   }
 
-  String _formatTime(DateTime dateTime) {
-    final now = DateTime.now();
-    final difference = now.difference(dateTime);
-
-    if (difference.inMinutes < 60) {
-      return '${difference.inMinutes}m ago';
-    } else if (difference.inHours < 24) {
-      return '${difference.inHours}h ago';
-    } else {
-      return '${dateTime.day}/${dateTime.month}';
-    }
+  String _getMainActionText(String status, String paymentStatus) {
+    if (status == 'pending') return 'Mark Preparing';
+    if (status == 'preparing') return 'Mark Ready';
+    if (status == 'prepared') return 'Mark Served';
+    if (status == 'served' && paymentStatus != 'paid') return 'Collect Payment';
+    return 'Close';
   }
 
-  Future<void> _markAsPreparing() async {
-    if (!mounted) return;
+  Future<void> _handleUndo(String orderId, String targetStatus, String orderType) async {
     setState(() => _isUpdating = true);
-    try {
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      final branchId = userProvider.currentBranch;
-      if (branchId == null) {
-        _showErrorSnackbar('Branch not found. Please restart the app.');
-        return;
-      }
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final branchId = userProvider.currentBranch;
 
+    if (branchId == null) {
+      setState(() => _isUpdating = false);
+      return;
+    }
+
+    try {
+      final doc = await FirebaseFirestore.instance.collection('Orders').doc(orderId).get();
+      final data = doc.data() as Map<String, dynamic>;
+      final tableNumber = data['tableNumber']?.toString();
+
+      // We use validateTransition: false because we are doing a backward jump (Undo)
+      // which might be restricted by default validation logic.
       await FirestoreService.updateOrderStatusWithTable(
         branchId,
-        widget.order.id,
-        OrderStatus.preparing,
-        validateTransition: false, // Allow direct transition for robustness
+        orderId,
+        targetStatus,
+        tableNumber: orderType == 'dine_in' ? tableNumber : null,
+        validateTransition: false,
       );
-      if (!mounted) return;
-      _showSuccessSnackbar('Order marked as preparing!');
-      Navigator.pop(context);
-    } on OrderNotFoundException catch (_) {
-      if (!mounted) return;
-      _showErrorSnackbar('Order no longer exists.');
-    } on InvalidStatusTransitionException catch (e) {
-      if (!mounted) return;
-      _showErrorSnackbar('Cannot change status: ${e.fromStatus} to ${e.toStatus}');
-    } on FirebaseException catch (e) {
-      if (!mounted) return;
-      _showErrorSnackbar('Update failed: ${e.message}');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Undone: Order is now $targetStatus")),
+        );
+      }
     } catch (e) {
-      if (!mounted) return;
-      _showErrorSnackbar('Update failed: ${e.toString()}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Undo Failed: $e"), backgroundColor: Colors.red),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isUpdating = false);
     }
   }
 
-  Future<void> _markAsPrepared() async {
-    if (!mounted) return;
+  Future<void> _handleReturnOrder(String orderId) async {
+    final TextEditingController reasonController = TextEditingController();
+
+    bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Return Order'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Mark this entire order as Returned? This will release the table.'),
+              const SizedBox(height: 16),
+              TextField(
+                controller: reasonController,
+                decoration: const InputDecoration(
+                  labelText: 'Reason for Return',
+                  hintText: 'e.g., Food quality issue, Customer left',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+              child: const Text('Confirm Return'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm != true) return;
+
     setState(() => _isUpdating = true);
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final branchId = userProvider.currentBranch!;
+
     try {
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      final branchId = userProvider.currentBranch;
-      if (branchId == null) {
-        _showErrorSnackbar('Branch not found. Please restart the app.');
-        return;
-      }
+      final doc = await FirebaseFirestore.instance.collection('Orders').doc(orderId).get();
+      final data = doc.data() as Map<String, dynamic>;
+      final tableNumber = data['tableNumber']?.toString();
+      final orderType = data['Order_type']?.toString() ?? 'dine_in';
 
       await FirestoreService.updateOrderStatusWithTable(
-        branchId,
-        widget.order.id,
-        OrderStatus.prepared,
-        validateTransition: false, // Allow direct transition for robustness
-      );
-      if (!mounted) return;
-      _showSuccessSnackbar('Order marked as prepared!');
-      Navigator.pop(context);
-    } on OrderNotFoundException catch (_) {
-      if (!mounted) return;
-      _showErrorSnackbar('Order no longer exists.');
-    } on InvalidStatusTransitionException catch (e) {
-      if (!mounted) return;
-      _showErrorSnackbar('Cannot change status: ${e.fromStatus} to ${e.toStatus}');
-    } on FirebaseException catch (e) {
-      if (!mounted) return;
-      _showErrorSnackbar('Update failed: ${e.message}');
-    } catch (e) {
-      if (!mounted) return;
-      _showErrorSnackbar('Update failed: ${e.toString()}');
-    } finally {
-      if (mounted) setState(() => _isUpdating = false);
-    }
-  }
-
-  Future<void> _markAsServed(String orderType) async {
-    if (!mounted) return;
-    setState(() => _isUpdating = true);
-    try {
-      final orderData =
-          (widget.order.data() as Map<String, dynamic>?) ?? <String, dynamic>{};
-      final tableNumber = orderData['tableNumber']?.toString();
-
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      final branchId = userProvider.currentBranch;
-      if (branchId == null) {
-        _showErrorSnackbar('Branch not found. Please restart the app.');
-        return;
-      }
-
-      final waiterEmail = userProvider.userEmail ?? 'unknown';
-
-      await FirestoreService.updateOrderStatusWithTable(
-        branchId,
-        widget.order.id,
-        OrderStatus.served,
-        tableNumber: orderType == OrderType.dineIn ? tableNumber : null,
-        validateTransition: false, // Allow direct transition for robustness
-        actionBy: waiterEmail,
+          branchId,
+          orderId,
+          'returned',
+          tableNumber: orderType == 'dine_in' ? tableNumber : null,
+          validateTransition: false
       );
 
-      if (!mounted) return;
-      _showSuccessSnackbar(
-        orderType == OrderType.takeaway
-            ? 'Order marked as picked up!'
-            : 'Order marked as served!',
-      );
-      Navigator.pop(context);
-    } on OrderNotFoundException catch (_) {
-      if (!mounted) return;
-      _showErrorSnackbar('Order no longer exists.');
-    } on InvalidStatusTransitionException catch (e) {
-      if (!mounted) return;
-      _showErrorSnackbar('Cannot change status: ${e.fromStatus} to ${e.toStatus}');
-    } on FirebaseException catch (e) {
-      if (!mounted) return;
-      _showErrorSnackbar('Update failed: ${e.message}');
-    } catch (e) {
-      if (!mounted) return;
-      _showErrorSnackbar('Update failed: ${e.toString()}');
-    } finally {
-      if (mounted) setState(() => _isUpdating = false);
-    }
-  }
-
-  Future<void> _processPayment(String paymentMethod) async {
-    Navigator.pop(context);
-    setState(() => _isUpdating = true);
-
-    try {
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      final branchId = userProvider.currentBranch;
-      if (branchId == null) {
-        _showErrorSnackbar('Branch not found. Please restart the app.');
-        return;
-      }
-
-      // Fetch FRESH order data to avoid stale amount/status
-      final freshOrderData = await FirestoreService.validateOrderExists(widget.order.id);
-      if (freshOrderData == null) {
-        _showErrorSnackbar('Order no longer exists.');
-        return;
-      }
-
-      // Check if already paid
-      final currentPaymentStatus = freshOrderData['paymentStatus'] as String? ?? '';
-      if (currentPaymentStatus == 'paid') {
-        _showErrorSnackbar('Order has already been paid.');
-        return;
-      }
-
-      final orderType = freshOrderData['Order_type']?.toString() ?? OrderType.dineIn;
-      final totalAmount = (freshOrderData['totalAmount'] as num?)?.toDouble() ?? 0.0;
-      final tableNumber = freshOrderData['tableNumber']?.toString();
-      final waiterEmail = userProvider.userEmail ?? 'unknown';
-
-      await FirestoreService.processPayment(
-        branchId: branchId,
-        orderId: widget.order.id,
-        paymentMethod: paymentMethod,
-        amount: totalAmount,
-        tableNumber: orderType == OrderType.dineIn ? tableNumber : null,
-        expectedAmount: totalAmount, // Validate amount hasn't changed
-      );
-
-      // Record paidBy metadata
-      await FirebaseFirestore.instance
-          .collection('Orders')
-          .doc(widget.order.id)
-          .update({
-        'paidBy': waiterEmail,
-        'paidAt': FieldValue.serverTimestamp(),
+      await FirebaseFirestore.instance.collection('Orders').doc(orderId).update({
+        'cancellationReason': reasonController.text.trim(),
+        'returnedAt': FieldValue.serverTimestamp(),
       });
 
-      if (!mounted) return;
-      _showSuccessSnackbar(
-        'Payment processed successfully with ${paymentMethod.toUpperCase()}!',
-      );
-      Navigator.pop(context);
-    } on OrderNotFoundException catch (_) {
-      if (!mounted) return;
-      _showErrorSnackbar('Order no longer exists.');
-    } on OrderModifiedException catch (_) {
-      if (!mounted) return;
-      _showErrorSnackbar('Order amount has changed. Please review and try again.');
-    } on InvalidStatusTransitionException catch (_) {
-      if (!mounted) return;
-      _showErrorSnackbar('Order has already been paid.');
-    } on FirebaseException catch (e) {
-      if (!mounted) return;
-      _showErrorSnackbar('Payment failed: ${e.message}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Order marked as Returned')));
+        Navigator.pop(context); // Exit screen
+      }
     } catch (e) {
-      if (!mounted) return;
-      _showErrorSnackbar('Payment failed: ${e.toString()}');
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
     } finally {
       if (mounted) setState(() => _isUpdating = false);
     }
   }
 
-  // Helper methods
-  void _showSuccessSnackbar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.green,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+  Future<void> _handleMainAction(
+      BuildContext context,
+      String orderId,
+      String status,
+      String paymentStatus,
+      String orderType,
+      ) async {
+    setState(() => _isUpdating = true);
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final branchId = userProvider.currentBranch;
+
+    if (branchId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Branch not found"),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => _isUpdating = false);
+      }
+      return;
+    }
+
+    try {
+      if (status == 'pending') {
+        await FirestoreService.updateOrderStatusWithTable(
+          branchId,
+          orderId,
+          'preparing',
+          validateTransition: false,
+        );
+      } else if (status == 'preparing') {
+        await FirestoreService.updateOrderStatusWithTable(
+          branchId,
+          orderId,
+          'prepared',
+          validateTransition: false,
+        );
+      } else if (status == 'prepared') {
+        final email = userProvider.userEmail ?? 'unknown';
+        await FirestoreService.claimAndServeOrder(
+          branchId: branchId,
+          orderId: orderId,
+          waiterEmail: email,
+          orderType: orderType,
+        );
+      } else if (status == 'served' && paymentStatus != 'paid') {
+        _showPaymentModal(context, orderId, branchId, orderType);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isUpdating = false);
+    }
   }
 
-  void _showErrorSnackbar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  Future<void> _returnOrder() async {
+  Future<void> _handleCancel(String orderId) async {
     final TextEditingController reasonController = TextEditingController();
-    
+
     // Show confirmation dialog with reason field
     bool? confirm = await showDialog<bool>(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
           title: Row(
-            children: [
+            children: const [
               Icon(Icons.cancel_outlined, color: Colors.red),
               SizedBox(width: 8),
               Text('Cancel Order'),
@@ -1320,19 +796,18 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Are you sure you want to cancel this order? This action cannot be undone.',
+                'Are you sure you want to cancel this order?',
                 style: TextStyle(color: Colors.grey[700]),
               ),
-              SizedBox(height: 16),
+              const SizedBox(height: 16),
               TextField(
                 controller: reasonController,
                 decoration: InputDecoration(
-                  labelText: 'Cancellation Reason (Optional)',
-                  hintText: 'e.g. Customer request, Out of stock...',
+                  labelText: 'Reason (Optional)',
+                  hintText: 'e.g. Out of stock',
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  prefixIcon: Icon(Icons.comment_outlined),
                 ),
                 maxLines: 2,
               ),
@@ -1341,7 +816,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: Text('No, Keep Order'),
+              child: const Text('Keep Order'),
             ),
             ElevatedButton(
               onPressed: () => Navigator.of(context).pop(true),
@@ -1349,7 +824,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 backgroundColor: Colors.red,
                 foregroundColor: Colors.white,
               ),
-              child: Text('Yes, Cancel Order'),
+              child: const Text('Cancel Order'),
             ),
           ],
         );
@@ -1359,295 +834,212 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     if (confirm != true) return;
 
     setState(() => _isUpdating = true);
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final branchId = userProvider.currentBranch;
+
+    if (branchId == null) {
+      if (mounted) setState(() => _isUpdating = false);
+      return;
+    }
 
     try {
-      final orderData =
-          (widget.order.data() as Map<String, dynamic>?) ?? <String, dynamic>{};
+      final orderSnap = await FirebaseFirestore.instance
+          .collection('Orders')
+          .doc(orderId)
+          .get();
+      final orderData = orderSnap.data() as Map<String, dynamic>;
       final orderType = orderData['Order_type']?.toString() ?? 'dine_in';
       final tableNumber = orderData['tableNumber']?.toString();
 
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      final branchId = userProvider.currentBranch;
-
-      if (branchId == null) {
-        _showErrorSnackbar('Branch not found.');
-        return;
-      }
-
-      // Add cancellation reason if provided
-      final reason = reasonController.text.trim();
-
-      // Use transactional update for order + table status atomicity
       await FirestoreService.updateOrderStatusWithTable(
         branchId,
-        widget.order.id,
+        orderId,
         'cancelled',
-        tableNumber: orderType == OrderType.dineIn ? tableNumber : null,
+        tableNumber: orderType == 'dine_in' ? tableNumber : null,
         validateTransition: false,
       );
 
-      // Update cancellation metadata separately (reason + timestamp)
-      final metaUpdate = <String, dynamic>{
-        'cancelledAt': FieldValue.serverTimestamp(),
-      };
-      if (reason.isNotEmpty) {
-        metaUpdate['cancellationReason'] = reason;
+      if (reasonController.text.isNotEmpty) {
+        await FirebaseFirestore.instance
+            .collection('Orders')
+            .doc(orderId)
+            .update({'cancellationReason': reasonController.text.trim()});
       }
-      await FirebaseFirestore.instance
-          .collection('Orders')
-          .doc(widget.order.id)
-          .update(metaUpdate);
 
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Order cancelled successfully!'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-
-      Navigator.pop(context);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Order cancelled'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        Navigator.pop(context);
+      }
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error cancelling order: $e'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isUpdating = false);
     }
   }
 
-  Future<void> _returnToPending() async {
-    setState(() => _isUpdating = true);
-
-    try {
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      final branchId = userProvider.currentBranch;
-
-      if (branchId == null) {
-        _showErrorSnackbar('Branch not found.');
-        return;
-      }
-
-      await FirestoreService.updateOrderStatusWithTable(
-        branchId,
-        widget.order.id,
-        'pending',
-        validateTransition: false,
-      );
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Order returned to pending!'),
-          backgroundColor: Colors.amber[700],
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-
-      Navigator.pop(context);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error updating order: $e'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _isUpdating = false);
-    }
-  }
-
-  Future<void> _returnToPreparing() async {
-    setState(() => _isUpdating = true);
-
-    try {
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      final branchId = userProvider.currentBranch;
-
-      if (branchId == null) {
-        _showErrorSnackbar('Branch not found.');
-        return;
-      }
-
-      await FirestoreService.updateOrderStatusWithTable(
-        branchId,
-        widget.order.id,
-        'preparing',
-        validateTransition: false,
-      );
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Order returned to preparing!'),
-          backgroundColor: Colors.orange,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-
-      Navigator.pop(context);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error updating order: $e'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _isUpdating = false);
-    }
-  }
-
-  Future<void> _returnToPrepared() async {
-    setState(() => _isUpdating = true);
-
-    try {
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      final branchId = userProvider.currentBranch;
-
-      if (branchId == null) {
-        _showErrorSnackbar('Branch not found.');
-        return;
-      }
-
-      await FirestoreService.updateOrderStatusWithTable(
-        branchId,
-        widget.order.id,
-        'prepared',
-        validateTransition: false,
-      );
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Order returned to prepared!'),
-          backgroundColor: Colors.green,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-
-      Navigator.pop(context);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error updating order: $e'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _isUpdating = false);
-    }
-  }
-
-  void _showPaymentOptions() {
+  void _showPaymentModal(
+      BuildContext context,
+      String orderId,
+      String branchId,
+      String orderType,
+      ) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (context) {
-        return Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(20),
-              topRight: Radius.circular(20),
+      builder:
+          (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              "Select Payment Method",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
-          ),
-          padding: EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Select Payment Method',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: primaryColor,
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: _paymentOption(
+                    Icons.money,
+                    "Cash",
+                    Colors.green,
+                        () => _submitPayment(
+                      orderId,
+                      branchId,
+                      'cash',
+                      orderType,
+                    ),
+                  ),
                 ),
-              ),
-              SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () => _processPayment('cash'),
-                      child: Container(
-                        padding: EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.green[50],
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.green),
-                        ),
-                        child: Column(
-                          children: [
-                            Icon(Icons.money, size: 40, color: Colors.green),
-                            SizedBox(height: 8),
-                            Text(
-                              'Cash',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.green,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _paymentOption(
+                    Icons.credit_card,
+                    "Card",
+                    Colors.blue,
+                        () => _submitPayment(
+                      orderId,
+                      branchId,
+                      'card',
+                      orderType,
                     ),
                   ),
-                  SizedBox(width: 16),
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () => _processPayment('card'),
-                      child: Container(
-                        padding: EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.blue[50],
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.blue),
-                        ),
-                        child: Column(
-                          children: [
-                            Icon(
-                              Icons.credit_card,
-                              size: 40,
-                              color: Colors.blue,
-                            ),
-                            SizedBox(height: 8),
-                            Text(
-                              'Card',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.blue,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              SizedBox(height: 20),
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text('Cancel'),
-              ),
-            ],
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _paymentOption(
+      IconData icon,
+      String label,
+      Color color,
+      VoidCallback onTap,
+      ) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, size: 32, color: color),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: TextStyle(color: color, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _submitPayment(
+      String orderId,
+      String branchId,
+      String method,
+      String orderType,
+      ) async {
+    Navigator.pop(context); // close modal
+    setState(() => _isUpdating = true);
+
+    try {
+      final doc =
+      await FirebaseFirestore.instance
+          .collection('Orders')
+          .doc(orderId)
+          .get();
+
+      if (!doc.exists || doc.data() == null) {
+        throw Exception("Order data not found");
+      }
+
+      final data = doc.data() as Map<String, dynamic>;
+
+      final amount = (data['totalAmount'] as num).toDouble();
+      final email =
+          Provider.of<UserProvider>(
+            context,
+            listen: false,
+          ).userEmail ??
+              'staff';
+
+      await FirestoreService.claimAndPayOrder(
+        branchId: branchId,
+        orderId: orderId,
+        waiterEmail: email,
+        paymentMethod: method,
+        amount: amount,
+        orderType: orderType,
+        tableNumber:
+        orderType == 'dine_in'
+            ? data['tableNumber']?.toString()
+            : null,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Payment Successful"),
+            backgroundColor: Colors.green,
           ),
         );
-      },
-    );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Payment Failed: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isUpdating = false);
+    }
   }
 }
