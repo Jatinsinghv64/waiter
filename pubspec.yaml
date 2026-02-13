@@ -44,7 +44,12 @@ dependencies:
   audioplayers: ^6.5.1
 
   shared_preferences: ^2.2.2
+
   connectivity_plus: ^6.0.3
+
+  # Printing Support
+  printing: ^5.13.2
+  pdf: ^3.11.1
 
 dev_dependencies:
   flutter_test:

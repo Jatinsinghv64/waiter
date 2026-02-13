@@ -138,6 +138,9 @@ class FirestoreService {
   // TABLE OPERATIONS (SCALABLE - SUBCOLLECTIONS)
   // ============================================
 
+  /// Migrates tables from Branch document (legacy) to Subcollection (scalable)
+  /// FIXED: Only writes if the table document does NOT exist in the subcollection.
+  /// This prevents overwriting live status with stale data from the Branch doc.
   static Future<void> migrateTablesToSubcollection(String branchId) async {
     final branchRef = _firestore.collection('Branch').doc(branchId);
 
@@ -153,9 +156,15 @@ class FirestoreService {
       final tablesCollection = branchRef.collection('Tables');
 
       for (final tableNo in tablesMap.keys) {
-        final tableData = tablesMap[tableNo] as Map<String, dynamic>;
         final tableDocRef = tablesCollection.doc(tableNo);
-        transaction.set(tableDocRef, tableData, SetOptions(merge: true));
+        final tableSnapshot = await transaction.get(tableDocRef);
+
+        // CRITICAL FIX: Only migrate if the document does NOT exist.
+        // If it exists, we assume the subcollection has the latest live status.
+        if (!tableSnapshot.exists) {
+          final tableData = tablesMap[tableNo] as Map<String, dynamic>;
+          transaction.set(tableDocRef, tableData);
+        }
       }
     });
   }
@@ -298,6 +307,7 @@ class FirestoreService {
     String? placedByUserId,
   }) async {
     return await _firestore.runTransaction((transaction) async {
+      // 1. Verify table status
       final tableRef = _firestore
           .collection('Branch')
           .doc(branchId)
@@ -324,13 +334,16 @@ class FirestoreService {
         }
       }
 
+      // 2. SECURITY: Server-side Price Validation
       double calculatedSubtotal = 0.0;
       final validatedItems = <Map<String, dynamic>>[];
 
       for (final item in items) {
         final itemId = item['id'];
         final quantity = (item['quantity'] as num).toInt();
-        final selectedVariant = item['selectedVariant'] as Map<String, dynamic>?;
+        dynamic selectedVariantRaw = item['selectedVariant'];
+        Map<String, dynamic>? selectedVariant;
+        double variantPrice = 0.0;
 
         final itemRef = _firestore.collection('menu_items').doc(itemId);
         final itemDoc = await transaction.get(itemRef);
@@ -340,17 +353,68 @@ class FirestoreService {
         }
 
         final itemData = itemDoc.data() as Map<String, dynamic>;
-        double unitPrice = (itemData['price'] as num).toDouble();
+        double basePrice = (itemData['price'] as num).toDouble();
 
-        if (selectedVariant != null) {
-          unitPrice = (selectedVariant['price'] as num).toDouble();
+        // Resolve variant data and price
+        if (selectedVariantRaw != null) {
+          if (selectedVariantRaw is Map) {
+            selectedVariant = Map<String, dynamic>.from(selectedVariantRaw);
+            // Use variantprice if available (additive), or fallback to price but check if it's reasonable?
+            // Assuming additive logic based on TableScreen:
+            variantPrice = (selectedVariant['variantprice'] as num?)?.toDouble() ?? 
+                           (selectedVariant['price'] as num?)?.toDouble() ?? 0.0;
+            
+            // Correction: If 'price' in map was mistakenly storing just the variant price (from previous bug), 
+            // AND we treat it as additive, we are fine.
+            // If 'price' was total, we might double count base. 
+            // But we prefer 'variantprice' key if it exists.
+          } else if (selectedVariantRaw is String) {
+            // Handle legacy/buggy case where variant is just a name
+            final variantName = selectedVariantRaw;
+            final variants = itemData['variants'];
+
+            if (variants != null) {
+              if (variants is List) {
+                 final variantList = List<Map<String, dynamic>>.from(
+                  variants.map((e) {
+                    if (e is Map) return Map<String, dynamic>.from(e);
+                    return {'name': e.toString(), 'variantprice': 0.0};
+                  }),
+                );
+                 final variant = variantList.firstWhere(
+                    (v) => v['name'] == variantName,
+                    orElse: () => <String, dynamic>{},
+                );
+                variantPrice = (variant['variantprice'] as num?)?.toDouble() ?? 0.0;
+              } else if (variants is Map) {
+                final variantsMap = variants as Map<String, dynamic>;
+                if (variantsMap.containsKey(variantName)) {
+                  final variantData = variantsMap[variantName];
+                  if (variantData is Map) {
+                    variantPrice = (variantData['variantprice'] as num?)?.toDouble() ?? 0.0;
+                  } else if (variantData is num) {
+                    variantPrice = (variantData as num).toDouble();
+                  }
+                }
+              }
+            }
+            selectedVariant = {
+              'name': variantName,
+              'variantprice': variantPrice,
+              'price': variantPrice // Store variant price consistently
+            };
+          }
         }
 
+        final unitPrice = basePrice + variantPrice;
         final lineTotal = unitPrice * quantity;
         calculatedSubtotal += lineTotal;
 
         final validatedItem = Map<String, dynamic>.from(item);
         validatedItem['price'] = unitPrice;
+        if (selectedVariant != null) {
+          validatedItem['selectedVariant'] = selectedVariant;
+        }
         validatedItems.add(validatedItem);
       }
 
@@ -400,7 +464,9 @@ class FirestoreService {
       for (final item in items) {
         final itemId = item['id'];
         final quantity = (item['quantity'] as num).toInt();
-        final selectedVariant = item['selectedVariant'] as Map<String, dynamic>?;
+        dynamic selectedVariantRaw = item['selectedVariant'];
+        Map<String, dynamic>? selectedVariant;
+        double variantPrice = 0.0;
 
         final itemRef = _firestore.collection('menu_items').doc(itemId);
         final itemDoc = await transaction.get(itemRef);
@@ -410,17 +476,60 @@ class FirestoreService {
         }
 
         final itemData = itemDoc.data() as Map<String, dynamic>;
-        double unitPrice = (itemData['price'] as num).toDouble();
+        double basePrice = (itemData['price'] as num).toDouble();
 
-        if (selectedVariant != null) {
-          unitPrice = (selectedVariant['price'] as num).toDouble();
+        // Resolve variant data and price
+        if (selectedVariantRaw != null) {
+          if (selectedVariantRaw is Map) {
+            selectedVariant = Map<String, dynamic>.from(selectedVariantRaw);
+            variantPrice = (selectedVariant['variantprice'] as num?)?.toDouble() ?? 
+                           (selectedVariant['price'] as num?)?.toDouble() ?? 0.0;
+          } else if (selectedVariantRaw is String) {
+            final variantName = selectedVariantRaw;
+            final variants = itemData['variants'];
+
+            if (variants != null) {
+              if (variants is List) {
+                 final variantList = List<Map<String, dynamic>>.from(
+                  variants.map((e) {
+                    if (e is Map) return Map<String, dynamic>.from(e);
+                    return {'name': e.toString(), 'variantprice': 0.0};
+                  }),
+                );
+                 final variant = variantList.firstWhere(
+                    (v) => v['name'] == variantName,
+                    orElse: () => <String, dynamic>{},
+                );
+                variantPrice = (variant['variantprice'] as num?)?.toDouble() ?? 0.0;
+              } else if (variants is Map) {
+                final variantsMap = variants as Map<String, dynamic>;
+                if (variantsMap.containsKey(variantName)) {
+                  final variantData = variantsMap[variantName];
+                  if (variantData is Map) {
+                    variantPrice = (variantData['variantprice'] as num?)?.toDouble() ?? 0.0;
+                  } else if (variantData is num) {
+                    variantPrice = (variantData as num).toDouble();
+                  }
+                }
+              }
+            }
+            selectedVariant = {
+              'name': variantName,
+              'variantprice': variantPrice,
+              'price': variantPrice
+            };
+          }
         }
 
+        final unitPrice = basePrice + variantPrice;
         final lineTotal = unitPrice * quantity;
         calculatedSubtotal += lineTotal;
 
         final validatedItem = Map<String, dynamic>.from(item);
         validatedItem['price'] = unitPrice;
+        if (selectedVariant != null) {
+          validatedItem['selectedVariant'] = selectedVariant;
+        }
         validatedItems.add(validatedItem);
       }
 
@@ -489,6 +598,9 @@ class FirestoreService {
       for (final item in newItems) {
         final itemId = item['id'];
         final quantity = (item['quantity'] as num).toInt();
+        dynamic selectedVariantRaw = item['selectedVariant'];
+        double variantPrice = 0.0;
+        Map<String, dynamic>? selectedVariant;
 
         final itemRef = _firestore.collection('menu_items').doc(itemId);
         final itemDoc = await transaction.get(itemRef);
@@ -496,16 +608,58 @@ class FirestoreService {
         if (!itemDoc.exists) throw InvalidOrderException('Item $itemId not found');
 
         final itemData = itemDoc.data()!;
-        double price = (itemData['price'] as num).toDouble();
+        double basePrice = (itemData['price'] as num).toDouble();
 
-        if (item['selectedVariant'] != null) {
-          price = (item['selectedVariant']['price'] as num).toDouble();
+         if (selectedVariantRaw != null) {
+          if (selectedVariantRaw is Map) {
+             selectedVariant = Map<String, dynamic>.from(selectedVariantRaw);
+             variantPrice = (selectedVariant['variantprice'] as num?)?.toDouble() ?? 
+                            (selectedVariant['price'] as num?)?.toDouble() ?? 0.0;
+          } else if (selectedVariantRaw is String) {
+            final variantName = selectedVariantRaw;
+            final variants = itemData['variants'];
+
+            if (variants != null) {
+              if (variants is List) {
+                 final variantList = List<Map<String, dynamic>>.from(
+                  variants.map((e) {
+                    if (e is Map) return Map<String, dynamic>.from(e);
+                    return {'name': e.toString(), 'variantprice': 0.0};
+                  }),
+                );
+                 final variant = variantList.firstWhere(
+                    (v) => v['name'] == variantName,
+                    orElse: () => <String, dynamic>{},
+                );
+                variantPrice = (variant['variantprice'] as num?)?.toDouble() ?? 0.0;
+              } else if (variants is Map) {
+                final variantsMap = variants as Map<String, dynamic>;
+                if (variantsMap.containsKey(variantName)) {
+                  final variantData = variantsMap[variantName];
+                  if (variantData is Map) {
+                    variantPrice = (variantData['variantprice'] as num?)?.toDouble() ?? 0.0;
+                  } else if (variantData is num) {
+                    variantPrice = (variantData as num).toDouble();
+                  }
+                }
+              }
+            }
+             selectedVariant = {
+              'name': variantName,
+              'variantprice': variantPrice,
+              'price': variantPrice
+            };
+          }
         }
 
-        calculatedAdditional += (price * quantity);
+        final unitPrice = basePrice + variantPrice;
+        calculatedAdditional += (unitPrice * quantity);
 
         final validatedItem = Map<String, dynamic>.from(item);
-        validatedItem['price'] = price;
+        validatedItem['price'] = unitPrice;
+        if (selectedVariant != null) {
+          validatedItem['selectedVariant'] = selectedVariant;
+        }
         validatedNewItems.add(validatedItem);
       }
 
@@ -541,7 +695,7 @@ class FirestoreService {
         String? actionBy,
       }) async {
     await _firestore.runTransaction((transaction) async {
-      // 1. READ: Get Order Doc
+      // 1. READ Order
       final orderRef = _firestore.collection('Orders').doc(orderId);
       final orderDoc = await transaction.get(orderRef);
 
@@ -556,8 +710,7 @@ class FirestoreService {
         throw InvalidStatusTransitionException(currentStatus ?? 'unknown', status);
       }
 
-      // 2. READ: Get Table Doc (if needed)
-      // Must happen before any write
+      // 2. READ Table
       DocumentReference? tableRef;
       DocumentSnapshot? tableDoc;
       bool shouldUpdateTable = true;
@@ -572,7 +725,7 @@ class FirestoreService {
         tableDoc = await transaction.get(tableRef);
       }
 
-      // 3. LOGIC Check
+      // 3. LOGIC
       if (tableNumber != null && tableDoc != null && tableDoc.exists) {
         final tableData = tableDoc.data() as Map<String, dynamic>;
         final currentTableOrderId = tableData['currentOrderId'] as String?;
@@ -584,7 +737,7 @@ class FirestoreService {
         }
       }
 
-      // 4. WRITE: Update Order
+      // 4. WRITE Order
       final currentVersion = (orderData['version'] as num?)?.toInt() ?? 1;
       final updateData = <String, dynamic>{
         'status': status,
@@ -604,7 +757,7 @@ class FirestoreService {
 
       transaction.update(orderRef, updateData);
 
-      // 5. WRITE: Update Table
+      // 5. WRITE Table
       if (tableNumber != null && shouldUpdateTable && tableRef != null) {
         String tableStatus = 'occupied';
 
@@ -634,7 +787,6 @@ class FirestoreService {
     });
   }
 
-  // FIX: Moved table read to the top to fix "reads before writes" error
   static Future<void> claimAndServeOrder({
     required String branchId,
     required String orderId,
@@ -653,11 +805,10 @@ class FirestoreService {
 
       final orderData = orderDoc.data() as Map<String, dynamic>;
 
-      // Determine if we need to read Table data
       final effectiveTableNumber = tableNumber ?? orderData['tableNumber']?.toString();
       final effectiveOrderType = orderType ?? orderData['Order_type']?.toString() ?? OrderType.dineIn;
 
-      // 2. READ Table (if applicable) - MUST be before any write
+      // 2. READ Table (if applicable)
       DocumentReference? tableRef;
       if (effectiveOrderType == OrderType.dineIn && effectiveTableNumber != null) {
         tableRef = _firestore
@@ -666,12 +817,10 @@ class FirestoreService {
             .collection('Tables')
             .doc(effectiveTableNumber);
 
-        // We perform the read even if we don't strictly need data for logic,
-        // to ensure the transaction locks the table document.
         await transaction.get(tableRef);
       }
 
-      // 3. Logic & Validations
+      // 3. Logic
       final currentStatus = orderData['status'] as String? ?? '';
       if (currentStatus != OrderStatus.prepared) {
         final claimedBy = orderData['servedBy'] as String? ??
@@ -701,7 +850,6 @@ class FirestoreService {
     });
   }
 
-  // FIX: Moved table read to the top to fix "reads before writes" error
   static Future<void> claimAndPayOrder({
     required String branchId,
     required String orderId,
@@ -711,6 +859,8 @@ class FirestoreService {
     String? tableNumber,
     String? orderType,
   }) async {
+    String? resolvedTableNumber; // Variable to store table number for post-transaction use
+
     await _firestore.runTransaction((transaction) async {
       // 1. READ Order
       final orderRef = _firestore.collection('Orders').doc(orderId);
@@ -722,11 +872,12 @@ class FirestoreService {
 
       final orderData = orderDoc.data() as Map<String, dynamic>;
 
-      // Determine if we need to read Table
       final effectiveTableNumber = tableNumber ?? orderData['tableNumber']?.toString();
       final effectiveOrderType = orderType ?? orderData['Order_type']?.toString() ?? OrderType.dineIn;
 
-      // 2. READ Table (if applicable) - MUST be before any write
+      resolvedTableNumber = effectiveTableNumber; // Capture for outside use
+
+      // 2. READ Table
       DocumentReference? tableRef;
       DocumentSnapshot? tableDoc;
 
@@ -740,7 +891,7 @@ class FirestoreService {
         tableDoc = await transaction.get(tableRef);
       }
 
-      // 3. Logic & Validations
+      // 3. Logic
       final currentStatus = orderData['status'] as String? ?? '';
       final currentPaymentStatus = orderData['paymentStatus'] as String? ?? '';
 
@@ -769,7 +920,6 @@ class FirestoreService {
         final tData = tableDoc.data() as Map<String, dynamic>;
         final tOrderId = tData['currentOrderId'] as String?;
 
-        // Safe clear: Only clear table if it is linked to THIS order
         if (tOrderId == orderId) {
           transaction.update(tableRef!, {
             'status': 'available',
@@ -779,6 +929,10 @@ class FirestoreService {
         }
       }
     });
+
+    if (resolvedTableNumber != null) {
+      clearCart(resolvedTableNumber!);
+    }
   }
 
   static Future<void> processPayment({
@@ -812,7 +966,7 @@ class FirestoreService {
         tableDoc = await transaction.get(tableRef);
       }
 
-      // 3. Logic & Validations
+      // 3. Logic
       final currentPaymentStatus = orderData['paymentStatus'] as String? ?? '';
       if (currentPaymentStatus == 'paid') {
         throw InvalidStatusTransitionException(currentPaymentStatus, 'paid');
@@ -851,6 +1005,10 @@ class FirestoreService {
         }
       }
     });
+
+    if (tableNumber != null) {
+      clearCart(tableNumber);
+    }
   }
 
   // ============================================

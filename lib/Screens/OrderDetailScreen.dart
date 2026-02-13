@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../Firebase/FirestoreService.dart';
 import '../Providers/UserProvider.dart';
+import '../Services/PrintingService.dart';
 import '../constants.dart';
 
 // ==========================================
@@ -525,33 +526,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   // ACTION HANDLERS
   // ==========================================
 
-  void _handlePrint(Map<String, dynamic> data) {
-    final receiptText = ReceiptGenerator.generateTextReceipt(data);
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Row(children: [Icon(Icons.print), SizedBox(width: 8), Text("Printing Ticket...")]),
-        content: SingleChildScrollView(
-          child: Container(
-            width: double.maxFinite,
-            padding: const EdgeInsets.all(12),
-            color: Colors.grey[200],
-            child: Text(receiptText, style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close")),
-          ElevatedButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Sent to Printer (Simulation)")));
-              },
-              child: const Text("Print")
-          ),
-        ],
-      ),
-    );
+  void _handlePrint(Map<String, dynamic> data) async {
+    try {
+      await PrintingService.printReceipt(data);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Printing failed: ${e.toString()}")));
+    }
   }
 
   Future<void> _handleReturnAction(String orderId) async {
@@ -724,6 +705,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         await FirestoreService.claimAndServeOrder(branchId: branchId, orderId: orderId, waiterEmail: email, orderType: orderType, tableNumber: tableNumber);
       } else if (status == 'served' && paymentStatus != 'paid') {
         _showPaymentModal(context, orderId, branchId, orderType);
+      } else {
+        // Handle "Close" action
+        Navigator.pop(context);
       }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));

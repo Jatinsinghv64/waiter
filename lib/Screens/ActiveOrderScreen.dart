@@ -224,54 +224,44 @@ class _ActiveOrdersScreenState extends State<ActiveOrdersScreen>
             )
             .toList();
 
-        return RefreshIndicator(
-          onRefresh: () async {
-            // Force a widget rebuild to fetch fresh data
-            if (mounted) {
-              setState(() {});
-            }
-            // Small delay for visual feedback
-            await Future.delayed(Duration(milliseconds: 300));
-          },
-          child: Center(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: 800),
-              child: ListView(
-                key: PageStorageKey('orders_list_$orderType'),
-                padding: EdgeInsets.all(16),
-                children: [
-                  _buildSummaryCards(
-                    pendingOrders.length,
-                    preparingOrders.length,
+        return Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: 800),
+            child: ListView(
+              key: PageStorageKey('orders_list_$orderType'),
+              padding: EdgeInsets.all(16),
+              children: [
+                _buildSummaryCards(
+                  pendingOrders.length,
+                  preparingOrders.length,
+                  preparedOrders.length,
+                ),
+                SizedBox(height: 20),
+                if (preparedOrders.isNotEmpty)
+                  _buildExpandableSection(
+                    'Ready to Serve',
                     preparedOrders.length,
+                    Colors.green,
+                    'ready',
+                    preparedOrders,
                   ),
-                  SizedBox(height: 20),
-                  if (preparedOrders.isNotEmpty)
-                    _buildExpandableSection(
-                      'Ready to Serve',
-                      preparedOrders.length,
-                      Colors.green,
-                      'ready',
-                      preparedOrders,
-                    ),
-                  if (preparingOrders.isNotEmpty)
-                    _buildExpandableSection(
-                      'Preparing',
-                      preparingOrders.length,
-                      Colors.orange,
-                      'preparing',
-                      preparingOrders,
-                    ),
-                  if (pendingOrders.isNotEmpty)
-                    _buildExpandableSection(
-                      'New Orders',
-                      pendingOrders.length,
-                      Colors.red,
-                      'pending',
-                      pendingOrders,
-                    ),
-                ],
-              ),
+                if (preparingOrders.isNotEmpty)
+                  _buildExpandableSection(
+                    'Preparing',
+                    preparingOrders.length,
+                    Colors.orange,
+                    'preparing',
+                    preparingOrders,
+                  ),
+                if (pendingOrders.isNotEmpty)
+                  _buildExpandableSection(
+                    'New Orders',
+                    pendingOrders.length,
+                    Colors.red,
+                    'pending',
+                    pendingOrders,
+                  ),
+              ],
             ),
           ),
         );

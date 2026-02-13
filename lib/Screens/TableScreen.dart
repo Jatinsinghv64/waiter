@@ -7,7 +7,6 @@ import 'package:flutter/services.dart';
 
 import '../Firebase/FirestoreService.dart';
 import 'OrderDetailScreen.dart';
-// import 'TableQRCodeScreen.dart'; // Removed
 import 'ProfileScreen.dart';
 import 'package:provider/provider.dart';
 import '../Providers/UserProvider.dart';
@@ -56,7 +55,8 @@ class _TablesScreenState extends State<TablesScreen>
     );
     _statsController.forward();
 
-    // Trigger lazy migration once when screen loads
+    // Only attempt migration once per session or app load to prevent overhead
+    // The Service handles the logic to NOT overwrite existing data
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final branchId = userProvider.currentBranch;
@@ -123,7 +123,6 @@ class _TablesScreenState extends State<TablesScreen>
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     onPressed: () async {
-                      // Refresh profile to check if branch was assigned
                       final email = FirebaseAuth.instance.currentUser?.email;
                       if (email != null) {
                         await userProvider.fetchUserProfile(email);
@@ -146,7 +145,6 @@ class _TablesScreenState extends State<TablesScreen>
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     onPressed: () async {
-                      // Logout and return to login screen
                       await FirebaseAuth.instance.signOut();
                       userProvider.clearProfile();
                     },
@@ -403,7 +401,6 @@ class _TablesScreenState extends State<TablesScreen>
 
   Widget _buildQuickStats(List<Map<String, dynamic>> tables) {
     return SliverToBoxAdapter(
-      // Using SlideTransition + FadeTransition with child caching for better performance
       child: SlideTransition(
         position: Tween<Offset>(begin: Offset(0, 0.3), end: Offset.zero)
             .animate(
@@ -654,7 +651,6 @@ class _TablesScreenState extends State<TablesScreen>
   Widget _buildTablesGrid(List<Map<String, dynamic>> filteredTables) {
     return SliverLayoutBuilder(
       builder: (context, constraints) {
-        // Calculate optimal column count based on available width
         final double availableWidth = constraints.crossAxisExtent;
         int crossAxisCount;
         double childAspectRatio;
@@ -686,7 +682,7 @@ class _TablesScreenState extends State<TablesScreen>
               final tableData = filteredTables[index];
               return _buildTableCard(
                 context,
-                tableData['tableNumber'], // Ensure ID was mapped
+                tableData['tableNumber'],
                 tableData,
               );
             }, childCount: filteredTables.length),
@@ -753,7 +749,6 @@ class _TablesScreenState extends State<TablesScreen>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Status Dot
             Container(
               margin: EdgeInsets.only(bottom: 12),
               padding: EdgeInsets.all(3),
@@ -847,7 +842,6 @@ class _TablesScreenState extends State<TablesScreen>
         ),
         child: Row(
           children: [
-            // Status Dot
             Container(
               padding: EdgeInsets.all(3),
               decoration: BoxDecoration(
@@ -937,7 +931,6 @@ class _TablesScreenState extends State<TablesScreen>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Handle bar
               Container(
                 margin: EdgeInsets.only(top: 12),
                 width: 40,
@@ -948,7 +941,6 @@ class _TablesScreenState extends State<TablesScreen>
                 ),
               ),
               SizedBox(height: 16),
-              // Title
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: 20),
                 child: Row(
@@ -978,9 +970,6 @@ class _TablesScreenState extends State<TablesScreen>
                 ),
               ),
               SizedBox(height: 24),
-              // Options
-              // QR Code option removed
-
               _buildOptionTile(
                 icon: Icons.restaurant_menu,
                 iconColor: Colors.orange[600]!,
@@ -1160,33 +1149,24 @@ class _OrderScreenState extends State<OrderScreen> {
   Duration _elapsed = Duration.zero;
   DateTime? _occupiedTime;
 
-  // New category-related variables
-  // New category-related variables
   Set<String> _expandedCategories = <String>{};
   bool _isLoadingCart = false;
-  bool _isInitializing = true; // Track if initial data load is complete
+  bool _isInitializing = true;
 
-  // Add this variable to track current order ID
   String? _currentOrderId;
   bool _isAddingToExistingOrder = false;
 
-  // Add these variables to track order status and payment status
   String _currentOrderStatus = '';
   String _currentPaymentStatus = 'unpaid';
 
-  // Add loading state for order submission
   bool _isSubmittingOrder = false;
 
-  // Debounce timer for search input
   Timer? _searchDebounceTimer;
 
-  // Debounce timer for cart saving
   Timer? _cartSaveDebounceTimer;
 
-  // Track order version for optimistic locking
   int _currentOrderVersion = 1;
 
-  // Track if order was deleted externally
   bool _orderWasDeleted = false;
 
   @override
@@ -1203,7 +1183,6 @@ class _OrderScreenState extends State<OrderScreen> {
     });
     _startOrResetTimer();
 
-    // Debounced search listener to prevent rapid rebuilds
     _searchController.addListener(() {
       _searchDebounceTimer?.cancel();
       _searchDebounceTimer = Timer(Duration(milliseconds: 300), () {
@@ -1218,12 +1197,9 @@ class _OrderScreenState extends State<OrderScreen> {
 
   Future<void> _initializeData() async {
     try {
-      // Load categories using Provider
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final branchId = userProvider.currentBranch;
       if (branchId != null) {
-        // Trigger load but don't await if we want to show cached data immediately
-        // or await if we want fresh data
         final menuProvider = Provider.of<MenuProvider>(context, listen: false);
         await menuProvider.loadCategories(branchId);
 
@@ -1264,7 +1240,6 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   void _handleTableUpdate(DocumentSnapshot snapshot) {
-    // New logic: Listen directly to the specific table document in subcollection
     final tableData = snapshot.data() as Map<String, dynamic>;
     final newStatus = tableData['status']?.toString() ?? 'available';
     final tableOrderId = tableData['currentOrderId']?.toString();
@@ -1273,16 +1248,13 @@ class _OrderScreenState extends State<OrderScreen> {
       _tableStatus = newStatus;
       _startOrResetTimer();
 
-      // Case 1: Table has a new/different order
       if (tableOrderId != null && _currentOrderId != tableOrderId) {
         _currentOrderId = tableOrderId;
         _isAddingToExistingOrder = true;
         _currentOrderVersion = 1;
         _listenToExistingOrder();
       }
-      // Case 2: Order was completed/paid - table no longer has an order
       else if (tableOrderId == null && _currentOrderId != null) {
-        // Order was completed - reset local state
         _existingOrderSubscription?.cancel();
         _existingOrderSubscription = null;
         _currentOrderId = null;
@@ -1292,6 +1264,25 @@ class _OrderScreenState extends State<OrderScreen> {
         _currentPaymentStatus = 'unpaid';
         _currentOrderVersion = 1;
         _orderWasDeleted = false;
+        
+        // Clear cart when table becomes available
+        _cartItems.clear();
+        _totalAmount = 0.0;
+        FirestoreService.clearCart(widget.tableNumber);
+      }
+
+      // AGGRESSIVE CLEAR: Ensure cart is cleared if table is available, regardless of other states
+      if (newStatus == 'available') {
+         _cartItems.clear();
+         _existingOrderItems.clear();
+         _currentOrderId = null;
+         _isAddingToExistingOrder = false;
+         _currentOrderStatus = '';
+         _currentPaymentStatus = 'unpaid';
+         _currentOrderVersion = 1;
+         _orderWasDeleted = false;
+         _totalAmount = 0.0;
+         FirestoreService.clearCart(widget.tableNumber);
       }
 
       if (_tableStatus == 'occupied' || _tableStatus == 'ordered') {
@@ -1307,7 +1298,6 @@ class _OrderScreenState extends State<OrderScreen> {
     });
   }
 
-  // Updated cart loading with error handling
   Future<void> _loadCartItems() async {
     setState(() => _isLoadingCart = true);
     try {
@@ -1323,14 +1313,12 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
-  // Updated order submission with transaction and proper error handling
   Future<void> _submitOrder() async {
     if (_cartItems.isEmpty) {
       _showErrorSnackbar('Cart is empty');
       return;
     }
 
-    // Check if order was deleted while user was adding items
     if (_orderWasDeleted) {
       _showErrorSnackbar('Order no longer exists. Please create a new order.');
       setState(() {
@@ -1345,7 +1333,6 @@ class _OrderScreenState extends State<OrderScreen> {
 
     try {
       if (_isAddingToExistingOrder && _currentOrderId != null) {
-        // Validate order still exists before adding items
         final orderExists = await FirestoreService.validateOrderExists(_currentOrderId!);
         if (orderExists == null) {
           _showErrorSnackbar('Order no longer exists. Creating new order...');
@@ -1353,7 +1340,6 @@ class _OrderScreenState extends State<OrderScreen> {
             _isAddingToExistingOrder = false;
             _currentOrderId = null;
           });
-          // Fall through to create new order
         } else {
           await FirestoreService.addToExistingOrder(
             orderId: _currentOrderId!,
@@ -1362,13 +1348,11 @@ class _OrderScreenState extends State<OrderScreen> {
           );
           _showSuccessSnackbar('Items added to order successfully!');
 
-          // Clear local cart state
           setState(() {
             _cartItems.clear();
             _totalAmount = 0.0;
           });
 
-          // Clear persisted cart
           await FirestoreService.clearCart(widget.tableNumber);
 
           if (mounted) {
@@ -1378,7 +1362,6 @@ class _OrderScreenState extends State<OrderScreen> {
         }
       }
 
-      // Create new order
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final branchId = userProvider.currentBranch;
 
@@ -1403,13 +1386,11 @@ class _OrderScreenState extends State<OrderScreen> {
       _listenToExistingOrder();
       _showSuccessSnackbar('Order submitted successfully!');
 
-      // Clear local cart state
       setState(() {
         _cartItems.clear();
         _totalAmount = 0.0;
       });
 
-      // Clear persisted cart
       await FirestoreService.clearCart(widget.tableNumber);
     } on OrderNotFoundException catch (e) {
       _showErrorSnackbar('Order not found: ${e.orderId}. Creating new order...');
@@ -1419,7 +1400,7 @@ class _OrderScreenState extends State<OrderScreen> {
       });
     } on OrderModifiedException catch (_) {
       _showErrorSnackbar('Order was modified by another user. Please refresh and try again.');
-      _listenToExistingOrder(); // Refresh order data
+      _listenToExistingOrder();
     } on TableOrderMismatchException catch (e) {
       _showErrorSnackbar('Table ${e.tableNumber} already has an active order.');
     } on InvalidStatusTransitionException catch (e) {
@@ -1435,7 +1416,6 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
-  // Updated payment processing with validation
   Future<void> _processPayment(String paymentMethod) async {
     Navigator.pop(context);
     setState(() => _isCheckingOut = true);
@@ -1449,7 +1429,6 @@ class _OrderScreenState extends State<OrderScreen> {
     }
 
     try {
-      // Validate order still exists and get current data
       final orderData = await FirestoreService.validateOrderExists(orderId);
 
       if (orderData == null) {
@@ -1462,7 +1441,6 @@ class _OrderScreenState extends State<OrderScreen> {
         return;
       }
 
-      // Check if already paid
       final currentPaymentStatus = orderData['paymentStatus'] as String? ?? '';
       if (currentPaymentStatus == 'paid') {
         _showErrorSnackbar('Order has already been paid.');
@@ -1494,14 +1472,14 @@ class _OrderScreenState extends State<OrderScreen> {
         paymentMethod: paymentMethod,
         amount: totalAmount,
         tableNumber: orderType == 'dine_in' ? widget.tableNumber : null,
-        expectedAmount: totalAmount, // Validate amount hasn't changed
+        expectedAmount: totalAmount,
       );
 
-      // Cancel the order subscription since order is now complete
+      if (!mounted) return;
+
       _existingOrderSubscription?.cancel();
       _existingOrderSubscription = null;
 
-      // FIX: Force immediate UI update to prevent "stuck" state
       if (mounted) {
         setState(() {
           _currentOrderId = null;
@@ -1510,7 +1488,7 @@ class _OrderScreenState extends State<OrderScreen> {
           _currentOrderStatus = '';
           _currentPaymentStatus = 'unpaid';
           _currentOrderVersion = 1;
-          _tableStatus = 'available'; // Optimistically reset table status locally
+          _tableStatus = 'available';
         });
       }
 
@@ -1526,7 +1504,7 @@ class _OrderScreenState extends State<OrderScreen> {
       });
     } on OrderModifiedException catch (_) {
       _showErrorSnackbar('Order amount has changed. Please review and try again.');
-      _listenToExistingOrder(); // Refresh order data
+      _listenToExistingOrder();
     } on InvalidStatusTransitionException catch (_) {
       _showErrorSnackbar('Order has already been paid.');
     } on FirebaseException catch (e) {
@@ -1540,7 +1518,6 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
-  // Updated table availability toggle
   Future<void> _toggleTableAvailability() async {
     if (_isToggling) return;
     setState(() => _isToggling = true);
@@ -1587,12 +1564,9 @@ class _OrderScreenState extends State<OrderScreen> {
         return;
       }
 
-      // FIX: Check if there is an active order ID on the table logic
-      // Use the one from state or the one passed in
       final targetOrderId = _currentOrderId;
 
       if (targetOrderId != null) {
-        // Cancel the ghost order to keep data clean
         await FirestoreService.updateOrderStatusWithTable(
             branchId,
             targetOrderId,
@@ -1610,11 +1584,9 @@ class _OrderScreenState extends State<OrderScreen> {
       );
       await FirestoreService.clearCart(widget.tableNumber);
 
-      // Cancel order subscription to prevent memory leak
       _existingOrderSubscription?.cancel();
       _existingOrderSubscription = null;
 
-      // Reset local state
       if (!mounted) return;
       setState(() {
         _currentOrderId = null;
@@ -1633,8 +1605,8 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
-  // Helper methods for consistent messaging
   void _showSuccessSnackbar(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -1645,6 +1617,7 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   void _showErrorSnackbar(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -1665,11 +1638,9 @@ class _OrderScreenState extends State<OrderScreen> {
     super.dispose();
   }
 
-  // Updated to track order status, payment status, and handle deleted orders
   void _listenToExistingOrder() {
     if (_currentOrderId == null) return;
 
-    // Always cancel existing subscription before creating a new one
     _existingOrderSubscription?.cancel();
     _existingOrderSubscription = _firestore
         .collection('Orders')
@@ -1680,7 +1651,6 @@ class _OrderScreenState extends State<OrderScreen> {
         if (!mounted) return;
 
         if (!snapshot.exists) {
-          // Order was deleted externally
           _handleOrderDeleted();
           return;
         }
@@ -1710,7 +1680,6 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
-  /// Handle when an order is deleted externally
   void _handleOrderDeleted() {
     if (!mounted) return;
 
@@ -1726,17 +1695,13 @@ class _OrderScreenState extends State<OrderScreen> {
       _currentOrderVersion = 1;
     });
 
-    // Cancel the subscription since order no longer exists
     _existingOrderSubscription?.cancel();
     _existingOrderSubscription = null;
   }
 
-  // Debounced cart saving to prevent excessive writes
   Future<void> _saveCartItems() async {
-    // Cancel any pending save
     _cartSaveDebounceTimer?.cancel();
 
-    // Debounce cart saves to reduce Firestore writes
     _cartSaveDebounceTimer = Timer(Duration(milliseconds: 500), () async {
       if (!mounted) return;
 
@@ -1750,13 +1715,10 @@ class _OrderScreenState extends State<OrderScreen> {
           'tableNumber': widget.tableNumber,
         });
       } catch (e) {
-        // Only log in debug mode, don't show to user for cart saves
         debugPrint('Error saving cart items: $e');
       }
     });
   }
-
-
 
   void _startOrResetTimer() {
     _timer?.cancel();
@@ -1860,7 +1822,6 @@ class _OrderScreenState extends State<OrderScreen> {
     });
   }
 
-  // Add navigation to OrderDetailScreen with sync on return
   Future<void> _navigateToOrderDetail() async {
     if (_currentOrderId == null) return;
 
@@ -1881,7 +1842,6 @@ class _OrderScreenState extends State<OrderScreen> {
             builder: (_) => OrderDetailScreen(order: orderDoc),
           ),
         );
-        // Refresh order listener on return - order may have been updated
         if (mounted && _currentOrderId != null) {
           _listenToExistingOrder();
         }
@@ -1975,14 +1935,12 @@ class _OrderScreenState extends State<OrderScreen> {
       body: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Left Panel: Status, Cart, Orders (40%)
           Expanded(
             flex: 4,
             child: Container(
               color: Colors.white,
               child: Column(
                 children: [
-                  // Status Bar
                   if (hasActiveOrder || _isAddingToExistingOrder)
                     Container(
                       padding: EdgeInsets.symmetric(
@@ -2074,7 +2032,6 @@ class _OrderScreenState extends State<OrderScreen> {
                     ),
                   ),
 
-                  // Bottom Action Area
                   if (_cartItems.isNotEmpty ||
                       (_currentOrderStatus == 'served' &&
                           _currentPaymentStatus == 'unpaid'))
@@ -2204,7 +2161,6 @@ class _OrderScreenState extends State<OrderScreen> {
             ),
           ),
           VerticalDivider(width: 1, color: Colors.grey[300]),
-          // Right Panel: Menu (60%)
           Expanded(
             flex: 6,
             child: Column(
@@ -2266,7 +2222,6 @@ class _OrderScreenState extends State<OrderScreen> {
       ),
       body: Column(
         children: [
-          // Minimal Status Bar
           if (hasActiveOrder || _isAddingToExistingOrder)
             Container(
               padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -2330,17 +2285,13 @@ class _OrderScreenState extends State<OrderScreen> {
               ),
             ),
 
-          // Compact Cart Section
           if (_cartItems.isNotEmpty) _buildCartSection(),
 
-          // Existing Order Summary (compact)
           if (_isAddingToExistingOrder && _existingOrderItems.isNotEmpty)
             _buildExistingOrderSection(),
 
-          // Search Bar
           _buildSearchBar(),
 
-          // Menu List
           Expanded(child: _buildMenuList()),
         ],
       ),
@@ -2458,8 +2409,8 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
-  // Updated with navigation functionality
   Widget _buildExistingOrderSection() {
+    if (_tableStatus == 'available') return SizedBox.shrink();
     return InkWell(
       onTap: _navigateToOrderDetail,
       child: Container(
@@ -2545,6 +2496,7 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   Widget _buildCartSection() {
+    if (_tableStatus == 'available') return SizedBox.shrink();
     return Container(
       margin: EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -2554,7 +2506,6 @@ class _OrderScreenState extends State<OrderScreen> {
       ),
       child: Column(
         children: [
-          // Header
           Container(
             padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
@@ -2592,7 +2543,6 @@ class _OrderScreenState extends State<OrderScreen> {
               ],
             ),
           ),
-          // Cart Items - Compact List
           ListView.separated(
             shrinkWrap: true,
             physics: NeverScrollableScrollPhysics(),
@@ -2605,7 +2555,6 @@ class _OrderScreenState extends State<OrderScreen> {
                 padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 child: Row(
                   children: [
-                    // Item name and price
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2634,7 +2583,6 @@ class _OrderScreenState extends State<OrderScreen> {
                         ],
                       ),
                     ),
-                    // Quantity controls
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -2684,7 +2632,6 @@ class _OrderScreenState extends State<OrderScreen> {
                       ],
                     ),
                     SizedBox(width: 12),
-                    // Price
                     SizedBox(
                       width: 60,
                       child: Text(
@@ -2707,9 +2654,7 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
-  // Updated _buildMenuList with category-based collapsible UI using MenuProvider
   Widget _buildMenuList({int crossAxisCount = 2}) {
-    // Helper to build list content to avoid nesting hell
     return Consumer<MenuProvider>(
       builder: (context, menuProvider, child) {
         if (menuProvider.isLoading || _isInitializing) {
@@ -2724,10 +2669,7 @@ class _OrderScreenState extends State<OrderScreen> {
           return Center(child: Text('Please select a branch'));
         }
 
-        // Show retry UI if categories failed to load or are empty
         if (categories.isEmpty) {
-          // It might be that there are really no categories, or load failed.
-          // MenuProvider should ideally track error state. For now assuming empty means empty.
           if (menuProvider.isLoading) return Center(child: CircularProgressIndicator());
 
           return Center(
@@ -2770,7 +2712,6 @@ class _OrderScreenState extends State<OrderScreen> {
 
             final menuItems = snapshot.data!.docs;
 
-            // Filter items based on search query
             final filteredItems = menuItems.where((item) {
               if (_searchQuery.isEmpty) return true;
               final itemData = item.data() as Map<String, dynamic>;
@@ -2788,34 +2729,28 @@ class _OrderScreenState extends State<OrderScreen> {
               return _buildNoResultsWidget();
             }
 
-            // Group items by category ID instead of name for better matching
             Map<String, List<QueryDocumentSnapshot>> categorizedItems = {};
 
-            // First, create empty lists for all categories
             for (var category in categories) {
               categorizedItems[category['id']] = [];
             }
 
-            // Add "Other" category for items that don't match
             categorizedItems['other'] = [];
 
-            // Then add items to their respective categories
             for (var item in filteredItems) {
               final itemData = item.data() as Map<String, dynamic>;
               final itemCategoryId = itemData['categoryId']
-                  ?.toString(); // Try categoryId first
+                  ?.toString();
               final itemCategoryName = itemData['category']
-                  ?.toString(); // Then try category name
+                  ?.toString();
 
               bool itemCategorized = false;
 
-              // Try to match by category ID
               if (itemCategoryId != null &&
                   categorizedItems.containsKey(itemCategoryId)) {
                 categorizedItems[itemCategoryId]!.add(item);
                 itemCategorized = true;
               }
-              // Try to match by category name
               else if (itemCategoryName != null) {
                 for (var category in categories) {
                   if (category['name'] == itemCategoryName) {
@@ -2826,7 +2761,6 @@ class _OrderScreenState extends State<OrderScreen> {
                 }
               }
 
-              // If still not categorized, put in "Other"
               if (!itemCategorized) {
                 categorizedItems['other']!.add(item);
               }
@@ -2837,9 +2771,8 @@ class _OrderScreenState extends State<OrderScreen> {
               itemCount:
               categories.length +
                   (categorizedItems['other']!.isNotEmpty ? 1 : 0) +
-                  1, // Add 1 for the header
+                  1,
               itemBuilder: (context, index) {
-                // Header with Expand/Collapse All
                 if (index == 0) {
                   final isAllExpanded = categories.every(
                         (c) => _expandedCategories.contains(c['name']),
@@ -2908,7 +2841,6 @@ class _OrderScreenState extends State<OrderScreen> {
                   );
                 }
 
-                // Adjust index for categories
                 final categoryIndex = index - 1;
 
                 if (categoryIndex < categories.length) {
@@ -2920,7 +2852,6 @@ class _OrderScreenState extends State<OrderScreen> {
                     crossAxisCount: crossAxisCount,
                   );
                 } else {
-                  // "Other" category section
                   final otherItems = categorizedItems['other']!;
                   return _buildCategorySection(
                     {
@@ -2970,7 +2901,6 @@ class _OrderScreenState extends State<OrderScreen> {
     final categoryName = category['name'] as String;
     final hasItems = items.isNotEmpty;
 
-    // Use StatefulBuilder to manage expanded state locally without rebuilding entire screen
     return StatefulBuilder(
       builder: (context, setLocalState) {
         final isExpanded = _expandedCategories.contains(categoryName);
@@ -2983,11 +2913,9 @@ class _OrderScreenState extends State<OrderScreen> {
           ),
           child: Column(
             children: [
-              // Compact Category Header
               InkWell(
                 onTap: hasItems
                     ? () {
-                  // Use local setState to avoid rebuilding StreamBuilder
                   setLocalState(() {
                     if (isExpanded) {
                       _expandedCategories.remove(categoryName);
@@ -3002,7 +2930,6 @@ class _OrderScreenState extends State<OrderScreen> {
                   padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   child: Row(
                     children: [
-                      // Category icon
                       Container(
                         width: 32,
                         height: 32,
@@ -3017,7 +2944,6 @@ class _OrderScreenState extends State<OrderScreen> {
                         ),
                       ),
                       SizedBox(width: 12),
-                      // Category Name
                       Expanded(
                         child: Text(
                           categoryName,
@@ -3028,7 +2954,6 @@ class _OrderScreenState extends State<OrderScreen> {
                           ),
                         ),
                       ),
-                      // Item count
                       if (hasItems)
                         Container(
                           padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -3046,7 +2971,6 @@ class _OrderScreenState extends State<OrderScreen> {
                           ),
                         ),
                       SizedBox(width: 8),
-                      // Expand/Collapse Arrow
                       if (hasItems)
                         Icon(
                           isExpanded ? Icons.expand_less : Icons.expand_more,
@@ -3058,7 +2982,6 @@ class _OrderScreenState extends State<OrderScreen> {
                 ),
               ),
 
-              // Expandable Items Section - Simple List
               if (isExpanded && hasItems)
                 _buildCategoryItems(items, crossAxisCount: crossAxisCount),
             ],
@@ -3079,7 +3002,7 @@ class _OrderScreenState extends State<OrderScreen> {
         physics: NeverScrollableScrollPhysics(),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: crossAxisCount,
-          childAspectRatio: 1.15, // Taller boxes to prevent overflow
+          childAspectRatio: 1.15,
           crossAxisSpacing: 10,
           mainAxisSpacing: 10,
         ),
@@ -3117,12 +3040,11 @@ class _OrderScreenState extends State<OrderScreen> {
             ),
           ],
         ),
-        padding: EdgeInsets.all(10), // Reduced padding
+        padding: EdgeInsets.all(10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // Name and Popular Badge
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -3156,7 +3078,6 @@ class _OrderScreenState extends State<OrderScreen> {
               ],
             ),
 
-            // Price and Add Button
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -3192,26 +3113,23 @@ class _OrderScreenState extends State<OrderScreen> {
     final itemData = item.data() as Map<String, dynamic>;
     final name = itemData['name']?.toString() ?? 'Unknown Item';
     final basePrice = (itemData['price'] as num?)?.toDouble() ?? 0.0;
+    final imageUrl = itemData['imageUrl']?.toString();
+    final description = itemData['description']?.toString();
 
-    // FIX: Handle both Map and List formats for variants
+    // Handle variants data properly
     List<Map<String, dynamic>> variants = [];
-
     final variantsData = itemData['variants'];
     if (variantsData != null) {
       if (variantsData is List) {
-        // If variants is already a List
         variants = List<Map<String, dynamic>>.from(variantsData);
       } else if (variantsData is Map) {
-        // If variants is a Map, convert it to a List
         variants = (variantsData as Map<String, dynamic>).entries.map((entry) {
           final Map<String, dynamic> variantMap = {'name': entry.key};
 
-          // Add the variant properties if entry.value is a Map
           if (entry.value is Map) {
             final valueMap = Map<String, dynamic>.from(entry.value as Map);
             variantMap.addAll(valueMap);
           } else {
-            // If it's not a Map, just store the value directly
             variantMap['value'] = entry.value;
           }
 
@@ -3226,277 +3144,528 @@ class _OrderScreenState extends State<OrderScreen> {
 
     showModalBottomSheet(
       context: context,
-      isScrollControlled: true,
+      isScrollControlled: true, // Keep this true for keyboard handling
       backgroundColor: Colors.transparent,
       builder: (context) {
-        return StatefulBuilder(
-          builder: (BuildContext context, StateSetter setModalState) {
-            // Calculate total price including selected variant
-            double variantPrice = 0.0;
-            if (selectedVariant != null) {
-              final variant = variants.firstWhere(
-                    (v) => v['name'] == selectedVariant,
-                orElse: () => <String, dynamic>{},
-              );
-              variantPrice =
-                  (variant['variantprice'] as num?)?.toDouble() ?? 0.0;
-            }
-            final totalPrice = basePrice + variantPrice;
-
-            return Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(20),
-                  topRight: Radius.circular(20),
-                ),
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(
+              context,
+            ).viewInsets.bottom, // This handles keyboard overlap
+          ),
+          child: Container(
+            constraints: BoxConstraints(
+              maxHeight:
+                  MediaQuery.of(context).size.height *
+                  0.85, // Increased to 85% for better visibility
+            ),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(24),
+                topRight: Radius.circular(24),
               ),
-              padding: EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        name,
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        'QAR ${totalPrice.toStringAsFixed(2)}',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: primaryColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: 16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black26,
+                  blurRadius: 20,
+                  offset: Offset(0, -2),
+                ),
+              ],
+            ),
+            child: StatefulBuilder(
+              builder: (BuildContext context, StateSetter setModalState) {
+                // Calculate total price including selected variant
+                double variantPrice = 0.0;
+                if (selectedVariant != null) {
+                  final variant = variants.firstWhere(
+                    (v) => v['name'] == selectedVariant,
+                    orElse: () => <String, dynamic>{},
+                  );
+                  variantPrice =
+                      (variant['variantprice'] as num?)?.toDouble() ?? 0.0;
+                }
+                final totalPrice = basePrice + variantPrice;
+                final finalTotal = totalPrice * quantity;
 
-                  // Variants Section
-                  Text(
-                    'Variants',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-                  ),
-                  SizedBox(height: 8),
-
-                  if (variants.isEmpty)
-                    Text(
-                      'No variants available',
-                      style: TextStyle(
-                        color: Colors.grey[600],
-                        fontStyle: FontStyle.italic,
-                      ),
-                    )
-                  else
-                    Column(
-                      children: variants.map((variant) {
-                        final variantName =
-                            variant['name']?.toString() ?? 'Unknown Variant';
-                        final variantPrice =
-                            (variant['variantprice'] as num?)?.toDouble() ??
-                                0.0;
-                        final isAvailable =
-                            variant['isAvailable'] ??
-                                true; // Default to true if not specified
-                        final isSelected = selectedVariant == variantName;
-
-                        return Container(
-                          margin: EdgeInsets.only(bottom: 8),
-                          padding: EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            border: Border.all(
-                              color: isSelected
-                                  ? primaryColor
-                                  : Colors.grey[300]!,
-                              width: isSelected ? 2 : 1,
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Header with Drag Handle
+                    Container(
+                      padding: EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          // Drag Handle
+                          Container(
+                            width: 40,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(2),
                             ),
-                            borderRadius: BorderRadius.circular(8),
-                            color: isSelected
-                                ? primaryColor.withOpacity(0.1)
-                                : Colors.transparent,
                           ),
-                          child: Row(
+                          SizedBox(height: 12),
+                          // Item Header
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Radio<String>(
-                                value: variantName,
-                                groupValue: selectedVariant,
-                                onChanged: isAvailable
-                                    ? (value) {
-                                  setModalState(() {
-                                    selectedVariant = value;
-                                  });
-                                }
-                                    : null,
-                                activeColor: primaryColor,
+                              // Item Image
+                              Container(
+                                width: 60,
+                                height: 60,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  color: primaryColor.withOpacity(0.1),
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: imageUrl != null && imageUrl.isNotEmpty
+                                      ? Image.network(
+                                          imageUrl,
+                                          fit: BoxFit.cover,
+                                          errorBuilder:
+                                              (context, error, stackTrace) =>
+                                                  Icon(
+                                                    Icons.restaurant_menu,
+                                                    color: primaryColor,
+                                                    size: 24,
+                                                  ),
+                                        )
+                                      : Icon(
+                                          Icons.restaurant_menu,
+                                          color: primaryColor,
+                                          size: 24,
+                                        ),
+                                ),
                               ),
+                              SizedBox(width: 12),
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      variantName,
+                                      name,
                                       style: TextStyle(
-                                        fontWeight: isSelected
-                                            ? FontWeight.w600
-                                            : FontWeight.w500,
-                                        color: isAvailable
-                                            ? Colors.grey[800]
-                                            : Colors.grey[400],
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.grey[800],
                                       ),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    if (variantPrice > 0)
-                                      Text(
-                                        '+QAR ${variantPrice.toStringAsFixed(2)}',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: primaryColor,
-                                          fontWeight: FontWeight.w500,
+                                    if (description != null &&
+                                        description.isNotEmpty)
+                                      Padding(
+                                        padding: EdgeInsets.only(top: 4),
+                                        child: Text(
+                                          description,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.grey[600],
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
                                   ],
                                 ),
                               ),
-                              if (!isAvailable)
-                                Container(
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.grey[200],
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    'Out of Stock',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: Colors.grey[600],
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ),
                             ],
                           ),
-                        );
-                      }).toList(),
+                        ],
+                      ),
                     ),
 
-                  SizedBox(height: 16),
+                    Divider(height: 1, color: Colors.grey[200]),
 
-                  // Quantity Selector
-                  Text(
-                    'Quantity',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-                  ),
-                  SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      IconButton(
-                        icon: Icon(Icons.remove),
-                        onPressed: () {
-                          if (quantity > 1) {
-                            setModalState(() {
-                              quantity--;
-                            });
-                          }
-                        },
-                      ),
-                      Container(
-                        width: 50,
-                        padding: EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey),
-                          borderRadius: BorderRadius.circular(8),
+                    // Content Area with Limited Height
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Variants Section
+                            if (variants.isNotEmpty) ...[
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.tune_rounded,
+                                    size: 20,
+                                    color: primaryColor,
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'Customize Your Order',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.grey[800],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: 12),
+
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.grey[50],
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: Colors.grey[200]!),
+                                ),
+                                child: Column(
+                                  children: variants.map((variant) {
+                                    final variantName =
+                                        variant['name']?.toString() ??
+                                        'Unknown Variant';
+                                    final variantPrice =
+                                        (variant['variantprice'] as num?)
+                                            ?.toDouble() ??
+                                        0.0;
+                                    final isAvailable =
+                                        variant['isAvailable'] ?? true;
+                                    final isSelected =
+                                        selectedVariant == variantName;
+
+                                    return Material(
+                                      color: Colors.transparent,
+                                      child: InkWell(
+                                        onTap: isAvailable
+                                            ? () {
+                                                setModalState(() {
+                                                  selectedVariant = isSelected
+                                                      ? null
+                                                      : variantName;
+                                                });
+                                              }
+                                            : null,
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: Container(
+                                          padding: EdgeInsets.all(16),
+                                          decoration: BoxDecoration(
+                                            border: Border(
+                                              bottom: variants.last != variant
+                                                  ? BorderSide(
+                                                      color: Colors.grey[200]!,
+                                                    )
+                                                  : BorderSide.none,
+                                            ),
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              // Custom Radio Button
+                                              Container(
+                                                width: 20,
+                                                height: 20,
+                                                decoration: BoxDecoration(
+                                                  shape: BoxShape.circle,
+                                                  border: Border.all(
+                                                    color: isSelected
+                                                        ? primaryColor
+                                                        : Colors.grey[400]!,
+                                                    width: 2,
+                                                  ),
+                                                  color: isSelected
+                                                      ? primaryColor
+                                                      : Colors.transparent,
+                                                ),
+                                                child: isSelected
+                                                    ? Icon(
+                                                        Icons.check,
+                                                        size: 12,
+                                                        color: Colors.white,
+                                                      )
+                                                    : null,
+                                              ),
+                                              SizedBox(width: 12),
+
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Row(
+                                                      children: [
+                                                        Expanded(
+                                                          child: Text(
+                                                            variantName,
+                                                            style: TextStyle(
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w500,
+                                                              color: isAvailable
+                                                                  ? (isSelected
+                                                                        ? primaryColor
+                                                                        : Colors
+                                                                              .grey[800])
+                                                                  : Colors
+                                                                        .grey[400],
+                                                              fontSize: 14,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                        if (variantPrice > 0)
+                                                          Text(
+                                                            '+QAR ${variantPrice.toStringAsFixed(2)}',
+                                                            style: TextStyle(
+                                                              fontSize: 14,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w600,
+                                                              color:
+                                                                  primaryColor,
+                                                            ),
+                                                          ),
+                                                      ],
+                                                    ),
+                                                    if (!isAvailable)
+                                                      Padding(
+                                                        padding:
+                                                            EdgeInsets.only(
+                                                              top: 4,
+                                                            ),
+                                                        child: Text(
+                                                          'Temporarily unavailable',
+                                                          style: TextStyle(
+                                                            fontSize: 12,
+                                                            color: Colors
+                                                                .orange[700],
+                                                            fontStyle: FontStyle
+                                                                .italic,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }).toList(),
+                                ),
+                              ),
+                              SizedBox(height: 24),
+                            ],
+
+                            // Quantity Selector
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.format_list_numbered_rounded,
+                                  size: 20,
+                                  color: primaryColor,
+                                ),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Quantity',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.grey[800],
+                                  ),
+                                ),
+                                Spacer(),
+                                Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[50],
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                      color: Colors.grey[300]!,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      IconButton(
+                                        icon: Icon(Icons.remove, size: 18),
+                                        onPressed: () {
+                                          if (quantity > 1) {
+                                            setModalState(() {
+                                              quantity--;
+                                            });
+                                          }
+                                        },
+                                        style: IconButton.styleFrom(
+                                          visualDensity: VisualDensity.compact,
+                                          padding: EdgeInsets.all(8),
+                                        ),
+                                      ),
+                                      Container(
+                                        width: 40,
+                                        alignment: Alignment.center,
+                                        child: Text(
+                                          quantity.toString(),
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                            color: primaryColor,
+                                          ),
+                                        ),
+                                      ),
+                                      IconButton(
+                                        icon: Icon(Icons.add, size: 18),
+                                        onPressed: () {
+                                          setModalState(() {
+                                            quantity++;
+                                          });
+                                        },
+                                        style: IconButton.styleFrom(
+                                          visualDensity: VisualDensity.compact,
+                                          padding: EdgeInsets.all(8),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            SizedBox(height: 24),
+
+                            // Special Instructions
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.edit_note_rounded,
+                                  size: 20,
+                                  color: primaryColor,
+                                ),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Special Instructions',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.grey[800],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            SizedBox(height: 8),
+                            Text(
+                              'Add any special requests or dietary requirements',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                            SizedBox(height: 8),
+                            Container(
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.grey[300]!),
+                              ),
+                              child: TextField(
+                                maxLines: 3,
+                                decoration: InputDecoration(
+                                  hintText:
+                                      'E.g. No onions, extra spicy, less salt, allergies...',
+                                  hintStyle: TextStyle(color: Colors.grey[500]),
+                                  border: InputBorder.none,
+                                  contentPadding: EdgeInsets.all(16),
+                                ),
+                                onChanged: (value) {
+                                  specialInstructions = value;
+                                },
+                              ),
+                            ),
+
+                            // Add some bottom padding for better scrolling
+                            SizedBox(height: 20),
+                          ],
                         ),
-                        child: Text(
-                          quantity.toString(),
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
+                      ),
+                    ),
+
+                    // Footer with Total and Add Button
+                    Container(
+                      padding: EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        border: Border(
+                          top: BorderSide(color: Colors.grey[200]!),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black12,
+                            blurRadius: 10,
+                            offset: Offset(0, -2),
                           ),
-                        ),
+                        ],
                       ),
-                      IconButton(
-                        icon: Icon(Icons.add),
-                        onPressed: () {
-                          setModalState(() {
-                            quantity++;
-                          });
-                        },
-                      ),
-                    ],
-                  ),
+                      child: Column(
+                        children: [
+                          // Total Price
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Total Amount',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                              Text(
+                                'QAR ${finalTotal.toStringAsFixed(2)}',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: primaryColor,
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: 16),
 
-                  SizedBox(height: 16),
-
-                  // Special Instructions
-                  Text(
-                    'Special Instructions (Optional)',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-                  ),
-                  SizedBox(height: 8),
-                  TextField(
-                    maxLines: 3,
-                    decoration: InputDecoration(
-                      hintText: 'E.g. No onions, extra spicy, etc.',
-                      border: OutlineInputBorder(),
-                    ),
-                    onChanged: (value) {
-                      specialInstructions = value;
-                    },
-                  ),
-
-                  SizedBox(height: 20),
-
-                  // Add to Cart Button
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _addToCart(
-                          item,
-                          specialInstructions,
-                          selectedVariant: selectedVariant,
-                          quantity: quantity,
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: primaryColor,
-                        foregroundColor: Colors.white,
-                        padding: EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: Text(
-                        'Add to Cart - QAR ${(totalPrice * quantity).toStringAsFixed(2)}',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
+                          // Add to Cart Button
+                          SizedBox(
+                            width: double.infinity,
+                            height: 54,
+                            child: ElevatedButton(
+                              onPressed: () {
+                                Navigator.pop(context);
+                                _addToCart(
+                                  item,
+                                  specialInstructions,
+                                  selectedVariant: selectedVariant,
+                                  quantity: quantity,
+                                );
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: primaryColor,
+                                foregroundColor: Colors.white,
+                                elevation: 2,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: Text(
+                                'Add to Order - QAR ${finalTotal.toStringAsFixed(2)}',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                ],
-              ),
-            );
-          },
+                  ],
+                );
+              },
+            ),
+          ),
         );
       },
     );
   }
 
+
   Widget? _buildBottomNavigationBar() {
-    // Enhanced condition: order served + unpaid + seat occupied + order exists
     bool showPaymentButton =
         _currentOrderStatus == 'served' &&
             _currentPaymentStatus == 'unpaid' &&
@@ -3590,7 +3759,6 @@ class _OrderScreenState extends State<OrderScreen> {
               ],
             ),
 
-          // UPDATED: Payment button with all required conditions
           if (showPaymentButton)
             Padding(
               padding: EdgeInsets.only(top: _cartItems.isNotEmpty ? 12 : 0),
@@ -3627,7 +3795,6 @@ class _OrderScreenState extends State<OrderScreen> {
               ),
             ),
 
-          // Original checkout button for other statuses
           if ((_tableStatus == 'ordered' || _tableStatus == 'occupied') &&
               !showPaymentButton)
             Padding(
@@ -3679,26 +3846,46 @@ class _OrderScreenState extends State<OrderScreen> {
       final itemData = item.data() as Map<String, dynamic>;
       final basePrice = (itemData['price'] as num?)?.toDouble() ?? 0.0;
 
-      // Calculate variant price if selected
       double variantPrice = 0.0;
+      Map<String, dynamic>? variantMapForCart;
+
       if (selectedVariant != null) {
         final variants = itemData['variants'];
         if (variants != null) {
           if (variants is List) {
-            final variantList = List<Map<String, dynamic>>.from(variants);
+            final variantList = List<Map<String, dynamic>>.from(
+              variants.map((e) {
+                if (e is Map) return Map<String, dynamic>.from(e);
+                return {'name': e.toString(), 'variantprice': 0.0};
+              }),
+            );
             final variant = variantList.firstWhere(
                   (v) => v['name'] == selectedVariant,
               orElse: () => <String, dynamic>{},
             );
             variantPrice = (variant['variantprice'] as num?)?.toDouble() ?? 0.0;
+            // Create a comprehensive variant map for the cart
+            variantMapForCart = Map<String, dynamic>.from(variant);
+            // Ensure compatability with FirestoreService which expects 'price'
+            variantMapForCart['price'] = variantPrice;
+            variantMapForCart['name'] = selectedVariant;
+
           } else if (variants is Map) {
             final variantsMap = variants as Map<String, dynamic>;
             if (variantsMap.containsKey(selectedVariant)) {
               final variantData = variantsMap[selectedVariant];
+              variantMapForCart = {'name': selectedVariant};
+
               if (variantData is Map) {
                 variantPrice =
                     (variantData['variantprice'] as num?)?.toDouble() ?? 0.0;
+                variantMapForCart.addAll(Map<String, dynamic>.from(variantData));
+              } else if (variantData is num) {
+                variantPrice = (variantData as num).toDouble();
+                variantMapForCart['variantprice'] = variantPrice;
               }
+              // Ensure 'price' key exists for FirestoreService
+              variantMapForCart['price'] = variantPrice;
             }
           }
         }
@@ -3706,16 +3893,20 @@ class _OrderScreenState extends State<OrderScreen> {
 
       final totalPrice = basePrice + variantPrice;
 
-      // Improved comparison logic for existing items
       final existingIndex = _cartItems.indexWhere((cartItem) {
-        // Compare item ID
         if (cartItem['id'] != item.id) return false;
 
-        // Compare selected variant
+        // Handle selectedVariant being a Map in the cart now
         final cartVariant = cartItem['selectedVariant'];
-        if (cartVariant != selectedVariant) return false;
+        String? cartVariantName;
+        if (cartVariant is Map) {
+          cartVariantName = cartVariant['name']?.toString();
+        } else if (cartVariant is String) { // Legacy support or safety
+          cartVariantName = cartVariant;
+        }
 
-        // Compare special instructions (handle null cases)
+        if (cartVariantName != selectedVariant) return false;
+
         final cartInstructions = cartItem['specialInstructions'];
         if (cartInstructions == null && specialInstructions == null)
           return true;
@@ -3725,12 +3916,10 @@ class _OrderScreenState extends State<OrderScreen> {
       });
 
       if (existingIndex >= 0) {
-        // Update existing item quantity
         int currentQuantity = (_cartItems[existingIndex]['quantity'] as num)
             .toInt();
         _cartItems[existingIndex]['quantity'] = currentQuantity + quantity;
       } else {
-        // Add new item to cart
         _cartItems.add({
           'id': item.id,
           'name': itemData['name']?.toString() ?? 'Unknown Item',
@@ -3738,9 +3927,9 @@ class _OrderScreenState extends State<OrderScreen> {
           'variantPrice': variantPrice,
           'price': totalPrice,
           'quantity': quantity,
-          'selectedVariant': selectedVariant,
+          'selectedVariant': variantMapForCart, // Store Map, not String
           'specialInstructions': specialInstructions,
-          'variantName': selectedVariant,
+          'variantName': selectedVariant, // Keep string for easy display access if needed
         });
       }
       _calculateTotal();
@@ -3755,7 +3944,7 @@ class _OrderScreenState extends State<OrderScreen> {
         _cartItems.removeAt(index);
       }
       _calculateTotal();
-      _saveCartItems(); // Save to Firestore
+      _saveCartItems();
     });
   }
 
@@ -3767,9 +3956,7 @@ class _OrderScreenState extends State<OrderScreen> {
     });
   }
 
-  // In _OrderScreenState class - Update the _showPaymentOptions method
   void _showPaymentOptions() {
-    // Check if order hasn't gone through proper workflow
     final bool hasSkippedSteps =
         _currentOrderStatus.isEmpty ||
             (_currentOrderStatus != 'served' && _currentOrderStatus != 'paid');
